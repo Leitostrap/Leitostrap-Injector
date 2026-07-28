@@ -2285,17 +2285,22 @@ class ProxyInjector:
             return True, msg
         return False, msg
 
-    def FetchOffsets(self, config_dir=None):
+    def FetchOffsets(self, config_dir=None, force=False):
         if not config_dir:
             config_dir = str(Path(os.environ.get('APPDATA', '')) / 'Leitostrap Injector')
         os.makedirs(config_dir, exist_ok=True)
         local_path = os.path.join(config_dir, "fflags.hpp")
         exe_dir = os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
         bundled_path = os.path.join(exe_dir, "fflags.hpp")
+        if force and os.path.exists(local_path):
+            try:
+                os.remove(local_path)
+            except Exception:
+                pass
         try:
             self._TryFetchRemote(local_path)
-        except Exception:
-            pass
+        except Exception as e:
+            self._log(f'Failed to fetch remote offsets: {e}')
         for p in [local_path, bundled_path]:
             if os.path.exists(p):
                 try:
@@ -2309,7 +2314,7 @@ class ProxyInjector:
 
     def _TryFetchRemote(self, save_path):
         url = "https://offsets.imtheo.lol/fflags.hpp"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"})
         try:
             ctx = ssl.create_default_context()
             with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
@@ -2317,8 +2322,18 @@ class ProxyInjector:
                 if "uintptr_t" in raw and len(raw) > 1000:
                     with open(save_path, "w", encoding="utf-8") as f:
                         f.write(raw)
+                    return True
         except Exception:
-            pass
+            try:
+                ctx = ssl._create_unverified_context()
+                with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
+                    raw = resp.read().decode("utf-8")
+                    if "uintptr_t" in raw and len(raw) > 1000:
+                        with open(save_path, "w", encoding="utf-8") as f:
+                            f.write(raw)
+                        return True
+            except Exception as e:
+                raise e
 
     def LoadOffsets(self, config_dir=None):
         try:
@@ -2716,10 +2731,20 @@ class LSAPI:
                 version = res.get("version", "")
                 try:
                     main_window.evaluate_js(
-                        'document.getElementById("homeOffsetsCount").textContent="' + count + '";' +
+                        'document.getElementById("homeCacheOffsetsCount").textContent="' + count + '";' +
                         '(function(){var e=document.getElementById("presetTotalInfo");if(e)e.textContent="' + count + ' offsets available";' +
                         'var v=document.getElementById("presetVersionInfo");if(v)v.textContent="Version: ' + version + '";})();'
                     )
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            mem_res = self.LoadMemoryOffsets(force=False)
+            if mem_res and mem_res.get('ok') and main_window:
+                mcount = str(mem_res.get("count", 0))
+                try:
+                    main_window.evaluate_js('document.getElementById("homeOffsetsCount").textContent="' + mcount + '";')
                 except Exception:
                     pass
         except Exception:
@@ -3733,10 +3758,10 @@ class LSAPI:
             'cached': False,
         }
 
-    def LoadMemoryOffsets(self):
+    def LoadMemoryOffsets(self, force=False):
         global _memory_injector
         try:
-            content = injector.FetchOffsets(self.config_dir) if injector else None
+            content = injector.FetchOffsets(self.config_dir, force=force) if injector else None
             offsets = {}
             flags = []
             seen = {}
@@ -6243,7 +6268,7 @@ function switchOffsetsSource(source) {
   if (source === 'memory') {
     if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.LoadMemoryOffsets === 'function') {
       document.getElementById('presetTotalInfo').textContent = 'Loading memory offsets...';
-      window.pywebview.api.LoadMemoryOffsets().then(function(res) {
+    window.pywebview.api.LoadMemoryOffsets().then(function(res) {
         if (res && res.ok) {
           presetFlags = res.flags || [];
           document.getElementById('presetTotalInfo').textContent = presetFlags.length.toLocaleString() + ' memory offsets loaded';
@@ -7277,7 +7302,7 @@ function reloadOffsets() {
     });
   }
   if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.LoadMemoryOffsets === 'function') {
-    window.pywebview.api.LoadMemoryOffsets().then(function(res) {
+    window.pywebview.api.LoadMemoryOffsets(true).then(function(res) {
       if (res && res.ok) {
         updateOffsetsDisplay(res.count || 0);
         logConsole('Loaded ' + (res.count || 0).toLocaleString() + ' memory offsets (theo)', 'success');
