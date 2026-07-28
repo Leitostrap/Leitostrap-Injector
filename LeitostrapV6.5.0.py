@@ -645,6 +645,24 @@ def _cleanup_stale_proxy_state():
     _remove_ca_from_cacert_pem()
 
 
+def _is_memory_method(method=None):
+    if method is None:
+        method = app_config.get('injection_method', 'proxy')
+    return method in ('offsets', 'offsetless')
+
+
+def _wait_for_roblox_flag_cache(timeout=120.0, min_size=100):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            if FLAG_CACHE_PATH.exists() and FLAG_CACHE_PATH.stat().st_size >= min_size:
+                return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
+
+
 DCZ_DICT_PATH_RE = re.compile(r'/([0-9a-f]{64})\.dcz(?:$|[?])', re.IGNORECASE)
 
 
@@ -1537,6 +1555,71 @@ class MemoryInjector:
             except Exception:
                 return False
 
+    def ReadValue(self, name, ftype):
+        addr = self.FindFlag(name)
+        if not addr:
+            return None
+        try:
+            field_data = self.core.ReadMem(self.handle, addr, 0xD0)
+            if not field_data:
+                return None
+            value_ptr = int.from_bytes(field_data[OffValuePtr:OffValuePtr + 8], "little")
+            if not value_ptr:
+                return None
+            ftype = str(ftype).strip().lower()
+            if ftype == "bool":
+                data = self.core.ReadMem(self.handle, value_ptr, 1)
+                return bool(data[0]) if data else None
+            if ftype == "int":
+                data = self.core.ReadMem(self.handle, value_ptr, 4)
+                return int.from_bytes(data, "little", signed=True) if data else None
+            if ftype == "float":
+                data = self.core.ReadMem(self.handle, value_ptr, 4)
+                return struct.unpack("<f", data)[0] if data else None
+            capacity = self.core.ReadI64(self.handle, value_ptr + 0x10)
+            if capacity is None:
+                return None
+            if capacity <= 0xF:
+                result = self.core.ReadMem(self.handle, value_ptr, min(16, 1024))
+                if not result:
+                    return None
+                return result.split(b"\x00", 1)[0].decode("utf-8", errors="ignore")
+            buf_ptr = self.core.ReadI64(self.handle, value_ptr)
+            if not buf_ptr or not self.IsValidPtr(buf_ptr):
+                return None
+            result = self.core.ReadMem(self.handle, buf_ptr, min(int(capacity) + 1, 1024))
+            if not result:
+                return None
+            return result.split(b"\x00", 1)[0].decode("utf-8", errors="ignore")
+        except Exception:
+            return None
+
+    def CheckReapply(self, flags_dict, threshold=0.4):
+        if not self.handle or not flags_dict:
+            return False
+        sample = list(flags_dict.items())
+        if len(sample) > 24:
+            sample = random.sample(sample, 24)
+        mismatches = 0
+        checked = 0
+        for key, expected in sample:
+            name, ftype, pval = self.ParseFlag(key, expected)
+            current = self.ReadValue(name, ftype)
+            if current is None:
+                current = self.ReadValue(key, ftype)
+            if current is None:
+                continue
+            checked += 1
+            exp = str(pval).strip().lower()
+            cur = str(current).strip().lower()
+            if ftype == "bool":
+                exp = "true" if pval else "false"
+            if cur != exp:
+                mismatches += 1
+        if checked < 3:
+            return True
+        return (mismatches / checked) >= threshold
+
     def MemoryInject(self, flags, prefer_offsetless=True, progress_callback=None, total_timeout=30.0):
         if not self.lock.acquire(timeout=3.0):
             return False, "Injection already in progress"
@@ -2098,7 +2181,7 @@ class ProxyInjector:
                 self._log(msg)
                 return False, msg
 
-    def StopProxy(self, clear_cache=True):
+    def StopProxy(self, clear_cache=True, clear_active_flags=False):
         with self.injection_lock:
             try:
                 if self.proxy_server:
@@ -2108,7 +2191,8 @@ class ProxyInjector:
                 self._flush_dns()
                 if clear_cache:
                     _clear_flag_cache()
-                self.active_flags = {}
+                if clear_active_flags:
+                    self.active_flags = {}
                 self._log('Proxy stopped')
             except Exception as e:
                 self._log(f'StopProxy error: {e}')
@@ -2261,6 +2345,10 @@ class ProxyInjector:
                 for k in flat_dict
             )
             return self.StartProxy(flat_dict, strip_textures=strip_textures)
+        if self.IsRunning():
+            self.StopProxy(clear_cache=False)
+        else:
+            _cleanup_stale_proxy_state()
         prefer_offsetless = (method == "offsetless")
         if not HAS_PYMEM:
             return False, "pymem is not installed. Run: pip install pymem"
@@ -2281,15 +2369,23 @@ class ProxyInjector:
         return ok, msg
 
     def NeedsReapply(self, flags_dict, threshold=0.4):
-        if not self.IsRunning():
-            return True
+        if not flags_dict:
+            return False
+        method = app_config.get('injection_method', 'proxy')
+        if _is_memory_method(method):
+            if _memory_injector and HAS_PYMEM:
+                try:
+                    if _memory_injector.AttachCore():
+                        return _memory_injector.CheckReapply(flags_dict, threshold)
+                except Exception:
+                    pass
         active = self.GetActiveFlags()
         if not active:
             return True
-        mismatches = 0
-        for k, v in flags_dict.items():
-            if str(active.get(k, '')).strip() != str(v).strip():
-                mismatches += 1
+        mismatches = sum(
+            1 for k, v in flags_dict.items()
+            if str(active.get(k, '')).strip() != str(v).strip()
+        )
         return (mismatches / max(len(flags_dict), 1)) >= threshold
 
 
@@ -2332,6 +2428,10 @@ class LSAPI:
             self.pid_cache_timestamp = 0.0
             self.last_injected_flags = None
             self.LoadConfig()
+            try:
+                _cleanup_stale_proxy_state()
+            except Exception:
+                pass
             try:
                 threading.Thread(target=self._preloadFlagCatalog, daemon=True).start()
             except Exception:
@@ -2395,7 +2495,7 @@ class LSAPI:
             pass
         try:
             if injector:
-                injector.StopProxy()
+                injector.StopProxy(clear_active_flags=True)
         except Exception:
             pass
         import os
@@ -2764,6 +2864,8 @@ class LSAPI:
             "open_roblox_on_apply": True,
             "auto_reopen_roblox": True,
             "ui_sounds": True,
+            "tips_enabled": True,
+            "notif_sound": True,
             "injection_method": "proxy",
             "currentTheme": "",
             "customBg": "",
@@ -2875,6 +2977,15 @@ class LSAPI:
         if not flat_dict:
             return {"success": False, "message": "No flags with values to apply"}
 
+        method = app_config.get('injection_method', 'proxy')
+        if _is_memory_method(method):
+            res = self.CheckRobloxPid()
+            if not res.get("running"):
+                return {
+                    "success": False,
+                    "message": "Roblox is not running. Open Roblox first for memory injection.",
+                }
+
         acquired = self.inject_lock.acquire(timeout=5.0)
         if not acquired:
             return {"success": False, "message": "Injection already in progress"}
@@ -2886,9 +2997,9 @@ class LSAPI:
         try:
             ok, msg = self.RunInject(flat_dict)
             if ok:
-                _prime_windows_flag_cache(flat_dict)
                 self.last_injected_flags = flat_dict
-                self._launch_roblox_and_monitor(flat_dict)
+                if method == 'proxy':
+                    self._launch_roblox_and_monitor(flat_dict)
             return {"success": ok, "message": msg}
         except Exception as e:
             return {"success": False, "message": str(e)}
@@ -2922,12 +3033,35 @@ class LSAPI:
                                 )
                         except Exception:
                             pass
+                roblox_started = False
                 for _ in range(120):
                     time.sleep(0.5)
                     res = self.CheckRobloxPid()
                     if res.get("running", False):
+                        roblox_started = True
                         break
-                time.sleep(15)
+                if not roblox_started:
+                    try:
+                        if main_window:
+                            main_window.evaluate_js(
+                                'showToast("Roblox did not start. Cache proxy still active.", "warn")'
+                            )
+                    except Exception:
+                        pass
+                    return
+                cache_ready = _wait_for_roblox_flag_cache(timeout=90.0)
+                if cache_ready:
+                    _prime_windows_flag_cache(flat_dict)
+                else:
+                    try:
+                        if main_window:
+                            main_window.evaluate_js(
+                                'showToast("Settings cache not ready yet, priming anyway...", "warn")'
+                            )
+                    except Exception:
+                        pass
+                    _prime_windows_flag_cache(flat_dict)
+                time.sleep(2)
                 try:
                     if injector:
                         injector.StopProxy(clear_cache=False)
@@ -2940,15 +3074,15 @@ class LSAPI:
                 _flush_dns()
                 time.sleep(1)
                 _flush_dns()
-                try:
-                    subprocess.run(
-                        ['taskkill', '/F', '/IM', 'RobloxPlayerBeta.exe'],
-                        capture_output=True, timeout=5,
-                        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
-                    )
-                except Exception:
-                    pass
                 if should_reopen:
+                    try:
+                        subprocess.run(
+                            ['taskkill', '/F', '/IM', 'RobloxPlayerBeta.exe'],
+                            capture_output=True, timeout=5,
+                            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+                        )
+                    except Exception:
+                        pass
                     time.sleep(2)
                     exe = self._find_roblox_exe()
                     if exe:
@@ -2963,6 +3097,14 @@ class LSAPI:
                             )
                             main_window.evaluate_js(
                                 'document.getElementById("rbxStatus").textContent="Running"'
+                            )
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        if main_window:
+                            main_window.evaluate_js(
+                                'showToast("Flags cached! Proxy disabled.", "success")'
                             )
                     except Exception:
                         pass
@@ -3135,7 +3277,7 @@ class LSAPI:
             pass
         try:
             if injector:
-                injector.StopProxy()
+                injector.StopProxy(clear_active_flags=True)
         except Exception:
             pass
         try:
@@ -3443,9 +3585,14 @@ class LSAPI:
             return []
 
     def GetMethodOffsetsCount(self):
+        method = app_config.get('injection_method', 'proxy')
         proxy_running = injector.IsRunning() if injector else False
         active_count = len(injector.GetActiveFlags()) if injector else 0
-        return {"method": "proxy", "memory_count": active_count, "proxy_running": proxy_running}
+        return {
+            "method": method,
+            "memory_count": active_count,
+            "proxy_running": proxy_running,
+        }
 
     def _proxy_flag_settings_urls(self):
         base_url = 'https://clientsettingscdn.roblox.com/v2/settings/application/'
@@ -5144,6 +5291,36 @@ body{font-family:'Inter',sans-serif;background:var(--bg-main, #0d0d0d);color:#e0
       </div>
 
       <div style="border-top:1px solid #1a1a1a;padding-top:16px;margin-bottom:20px;">
+        <label style="font-size:13px;color:#ccc;display:block;margin-bottom:10px">Notification Sound</label>
+        <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px;">
+          <div>
+            <div style="font-size:13px;color:#fff;font-weight:500;">Enable Notification Sound</div>
+            <div style="font-size:11px;color:#666;margin-top:2px;">Play a sound when tips appear at the top</div>
+          </div>
+          <label style="position:relative;display:inline-block;width:40px;height:22px;cursor:pointer;">
+            <input type="checkbox" id="notif_soundToggle" onchange="setSetting('notif_sound', this.checked)" style="opacity:0;width:0;height:0;">
+            <span class="rpcSlider" style="position:absolute;top:0;left:0;right:0;bottom:0;background:#2a2a2a;border-radius:22px;transition:.3s;"></span>
+            <span class="rpcKnob" style="position:absolute;left:3px;top:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:.3s;"></span>
+          </label>
+        </div>
+      </div>
+
+      <div style="border-top:1px solid #1a1a1a;padding-top:16px;margin-bottom:20px;">
+        <label style="font-size:13px;color:#ccc;display:block;margin-bottom:10px">Tips</label>
+        <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px;">
+          <div>
+            <div style="font-size:13px;color:#fff;font-weight:500;">Show Top Tips</div>
+            <div style="font-size:11px;color:#666;margin-top:2px;">Show rotating tip notifications at the top of the screen</div>
+          </div>
+          <label style="position:relative;display:inline-block;width:40px;height:22px;cursor:pointer;">
+            <input type="checkbox" id="tips_enabledToggle" onchange="setSetting('tips_enabled', this.checked)" style="opacity:0;width:0;height:0;">
+            <span class="rpcSlider" style="position:absolute;top:0;left:0;right:0;bottom:0;background:#2a2a2a;border-radius:22px;transition:.3s;"></span>
+            <span class="rpcKnob" style="position:absolute;left:3px;top:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:.3s;"></span>
+          </label>
+        </div>
+      </div>
+
+      <div style="border-top:1px solid #1a1a1a;padding-top:16px;margin-bottom:20px;">
         <label style="font-size:13px;color:#ccc;display:block;margin-bottom:10px">Potato Mode</label>
         <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px;">
           <div>
@@ -6159,6 +6336,7 @@ var _topNotificationMessages = [
 ];
 
 function _playNotifSound() {
+  if (getSetting('notif_sound') === false) return;
   try {
     var ctx = new (window.AudioContext || window.webkitAudioContext)();
     var osc = ctx.createOscillator();
@@ -6216,6 +6394,7 @@ function showTopNotification(msg, actionFn) {
 }
 
 function _startTopNotificationLoop() {
+  if (getSetting('tips_enabled') === false) return;
   var minInterval = 30000;
   var maxInterval = 60000;
   function scheduleNext() {
@@ -7638,6 +7817,10 @@ function setSetting(key, val) {
     var row = document.getElementById('reapplyMsRow');
     if (row) row.style.display = val ? 'block' : 'none';
   }
+  if (key === 'tips_enabled') {
+    if (!val && _topNotificationTimer) { clearTimeout(_topNotificationTimer); _topNotificationTimer = null; }
+    if (val && !_topNotificationTimer) _startTopNotificationLoop();
+  }
   if (key !== 'customBg' && typeof val === 'string' && val.length < 200) logConsole(key + ' set to ' + val);
 }
 
@@ -8270,7 +8453,7 @@ function init() {
       var enabled = (val === '' || val === undefined || val === null || val === true || val === 'true');
       _applyRpcToggleUI(enabled);
     }).catch(function(){});
-    ['auto_apply', 'random_apply', 'ui_sounds'].forEach(function(k) {
+    ['auto_apply', 'random_apply', 'ui_sounds', 'tips_enabled', 'notif_sound'].forEach(function(k) {
       window.pywebview.api.GetSetting(k).then(function(v) {
         _applyToggleUI(k, v === true || v === 'true');
         if (k === 'random_apply') {
@@ -8493,7 +8676,7 @@ if __name__ == "__main__":
                 pass
             try:
                 if injector:
-                    injector.StopProxy()
+                    injector.StopProxy(clear_active_flags=True)
                 else:
                     _remove_hosts_entries()
                     _flush_dns()
