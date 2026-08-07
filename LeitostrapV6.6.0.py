@@ -86,6 +86,26 @@ try:
 except AttributeError:
     pass
 
+def _format_error(e, context=''):
+    import inspect
+    tb = traceback.extract_tb(e.__traceback__)
+    parts = [str(e)]
+    if context:
+        parts.insert(0, context)
+    if tb:
+        last = tb[-1]
+        parts.append(f"  File: {os.path.basename(last.filename)}:{last.lineno}")
+        if last.name:
+            parts.append(f"  Function: {last.name}()")
+        if last.line:
+            parts.append(f"  Code: {last.line.strip()}")
+    full = ' | '.join(parts)
+    try:
+        logger.error(full)
+    except Exception:
+        pass
+    return full
+
 import gzip as gzip_module
 import zlib
 
@@ -637,6 +657,57 @@ def _clear_flag_cache():
         return True
     except Exception:
         return False
+
+
+def _delete_flag_cache_file():
+    """Delete flag_cache.dat directly."""
+    try:
+        if FLAG_CACHE_PATH.exists():
+            FLAG_CACHE_PATH.unlink(missing_ok=True)
+    except Exception:
+        pass
+    try:
+        alt = Path(os.environ.get('LOCALAPPDATA', '')) / 'Temp' / 'Roblox' / 'cache' / 'flag_cache.dat'
+        if alt.exists():
+            alt.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _remove_proxy_ca_dir():
+    """Remove the Leitostrap proxy CA certificate directory."""
+    ca_dir = Path(os.environ.get('APPDATA', '')) / 'Leitostrap Injector' / 'Proxy Certificates'
+    if ca_dir.exists():
+        try:
+            import shutil
+            shutil.rmtree(str(ca_dir), ignore_errors=True)
+        except Exception:
+            pass
+
+
+def _remove_client_settings_folders():
+    """Remove any ClientSettings folders written by Leitostrap."""
+    local = os.environ.get('LOCALAPPDATA', '')
+    roblox_versions = os.path.join(local, 'Roblox', 'Versions')
+    global_cs = os.path.join(local, 'Roblox', 'ClientSettings')
+    try:
+        if os.path.isdir(global_cs):
+            import shutil
+            shutil.rmtree(global_cs, ignore_errors=True)
+    except Exception:
+        pass
+    try:
+        if os.path.isdir(roblox_versions):
+            for ver_dir in os.listdir(roblox_versions):
+                cs_dir = os.path.join(roblox_versions, ver_dir, 'ClientSettings')
+                if os.path.isdir(cs_dir):
+                    try:
+                        import shutil
+                        shutil.rmtree(cs_dir, ignore_errors=True)
+                    except Exception:
+                        pass
+    except Exception:
+        pass
 
 
 _cache_watchdog_running = False
@@ -3874,7 +3945,8 @@ class LSAPI:
                         return {"success": True, "message": f"Injected 0/{total} flags (0 failed)", "pending": True}
             return {"success": ok, "message": msg}
         except Exception as e:
-            return {"success": False, "message": str(e)}
+            err = _format_error(e, 'ApplyFflags')
+            return {"success": False, "message": str(e), "details": err}
         finally:
             self.inject_busy = False
 
@@ -4244,6 +4316,9 @@ class LSAPI:
             _flush_dns()
             _remove_ca_from_cacert_pem()
             _clear_flag_cache()
+            _delete_flag_cache_file()
+            _remove_proxy_ca_dir()
+            _remove_client_settings_folders()
             if injector:
                 try:
                     if injector.proxy_server:
@@ -4262,7 +4337,7 @@ class LSAPI:
                         f"$c = [System.IO.File]::ReadAllText('{hosts_path}'); "
                         f"$lines = $c -split '`r?`n'; "
                         f"$cleaned = @(); "
-                        f"foreach ($l in $lines) {{ if ($l -notmatch 'Leitostrap') {{ $cleaned += $l }} }}; "
+                        f"foreach ($l in $lines) {{ if ($l -notmatch 'Leitostrap' -and $l -notmatch 'proxy entry') {{ $cleaned += $l }} }}; "
                         f"[System.IO.File]::WriteAllText('{hosts_path}', ($cleaned -join '`r`n'))"
                     )
                     subprocess.run(
@@ -4281,7 +4356,7 @@ class LSAPI:
                         f"$c = [System.IO.File]::ReadAllText('{hosts_path}'); "
                         f"$lines = $c -split '`r?`n'; "
                         f"$cleaned = @(); "
-                        f"foreach ($l in $lines) {{ if ($l -notmatch 'Leitostrap') {{ $cleaned += $l }} }}; "
+                        f"foreach ($l in $lines) {{ if ($l -notmatch 'Leitostrap' -and $l -notmatch 'proxy entry') {{ $cleaned += $l }} }}; "
                         f"[System.IO.File]::WriteAllText('{hosts_path}', ($cleaned -join '`r`n'))"
                     )
                     subprocess.run(
@@ -4297,6 +4372,8 @@ class LSAPI:
             msgs.append('Cache cleared')
             msgs.append('Hosts cleaned' if hosts_clean else 'Hosts cleanup may need admin')
             msgs.append('CA cert removed')
+            msgs.append('Proxy CA dir cleaned')
+            msgs.append('Flag cache deleted')
             exe = self._find_roblox_exe()
             if exe:
                 try:
@@ -4306,7 +4383,8 @@ class LSAPI:
                     msgs.append('Failed to relaunch Roblox')
             return {"success": True, "message": '. '.join(msgs)}
         except Exception as e:
-            return {"success": False, "message": str(e)}
+            err = _format_error(e, 'UnapplyFflags')
+            return {"success": False, "message": str(e), "details": err}
 
     def MinimizeWindow(self):
         if main_window:
@@ -4398,6 +4476,35 @@ class LSAPI:
     def OpenUrl(self, url):
         import webbrowser
         webbrowser.open(url)
+
+    def BrowseRobloxExe(self):
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes('-topmost', True)
+            path = filedialog.askopenfilename(
+                title='Select RobloxPlayerBeta.exe',
+                filetypes=[('Roblox Executable', 'RobloxPlayerBeta.exe'), ('All Files', '*.*')],
+            )
+            root.destroy()
+            if path and os.path.isfile(path):
+                app_config['custom_roblox_path'] = path
+                _save_config()
+                return {'success': True, 'path': path}
+            return {'success': False, 'path': ''}
+        except Exception as e:
+            return {'success': False, 'path': '', 'error': str(e)}
+
+    def GetRobloxExePath(self):
+        custom = app_config.get('custom_roblox_path', '')
+        if custom and os.path.isfile(custom):
+            return {'path': custom, 'source': 'custom'}
+        auto = self._find_roblox_exe()
+        if auto:
+            return {'path': auto, 'source': 'auto'}
+        return {'path': '', 'source': 'none'}
 
     def FetchDiscordAvatars(self):
         ids = {
@@ -4601,30 +4708,6 @@ class LSAPI:
                 {'name': 'Gray Sky'},
                 {'name': 'Lag Switch'}
             ]},
-            {'category': 'Physics / Exploits', 'has_logo': False, 'profiles': [
-                {'name': 'Speed Hack (Physics)'},
-                {'name': 'Super Jump'},
-                {'name': 'Noclip (Walk Through Walls)'},
-                {'name': 'Fly (Physics Method)'},
-                {'name': 'Wallglide (Wall Walk)'},
-                {'name': 'Gravity Manipulation'},
-                {'name': 'Spin Character'},
-                {'name': 'Ragdoll Control'},
-                {'name': 'Desync / Teleport'},
-                {'name': 'Hitbox Expand'},
-                {'name': 'Movement Break'},
-                {'name': 'ALL Physics Combined'}
-            ]},
-            {'category': 'Potato / Competitive', 'has_logo': False, 'profiles': [
-                {'name': 'Potato Graphics (Max FPS)'},
-                {'name': 'Remove All Textures'},
-                {'name': 'No Shadows + No Grass'},
-                {'name': 'Animation Control'},
-                {'name': 'Desync Advanced'},
-                {'name': 'FPS Uncap (2147M)'},
-                {'name': 'Anti Telemetry'},
-                {'name': 'ALL Performance Combined'}
-            ]},
         ]
 
     def GetProfileFlags(self, profile_name):
@@ -4654,26 +4737,6 @@ class LSAPI:
             'Full Bright (idk work)': {"DFFlagDebugForceFullBright": "True", "FFlagDebugDisableShadows": "True", "FIntRenderLightingGlobalShadows": "0", "FFlagFastGPULightCulling3": "False", "FFlagDebugForceFullBright": "True", "FIntRenderShadowMapBias": "0"},
             'Gray Sky': {"FFlagDebugSkyGray": "True"},
             'Lag Switch': {"DFIntMaxMissedWorldStepsRemembered": "1000"},
-            'Speed Hack (Physics)': {"DFIntDebugSimPhysicsSteppingMethodOverride": "10000000", "DFIntTaskSchedulerTargetFps": "9999", "FFlagDebugSimIntegrationStabilityTesting": "True"},
-            'Super Jump': {"DFIntNewRunningBaseGravityReductionFactorHundredth": "1000", "DFIntNewRunningBaseAltitudeP": "49534", "DFIntMaxAltitudePDStickHipHeightPercent": "-200", "DFIntNewRunningBaseAltitudeD": "0"},
-            'Noclip (Walk Through Walls)': {"FIntPGSPenetrationMarginMax": "2147483647", "FIntPGSPenetrationMarginMin": "2147483647", "DFIntAssemblyExtentsExpansionStudHundredth": "-150", "DFIntSHCellMinSizeAsBitShift": "4"},
-            'Fly (Physics Method)': {"DFIntNewRunningBaseAltitudeD": "0", "DFIntNewRunningBaseAltitudeP": "49534", "DFIntMaxAltitudePDStickHipHeightPercent": "-200", "DFIntNewRunningBaseGravityReductionFactorHundredth": "500"},
-            'Wallglide (Wall Walk)': {"DFIntUnstickForceAttackInTenths": "-1", "DFIntMaximumUnstickForceInGs": "-1", "DFIntUnstickForceDecayInTenths": "-1"},
-            'Gravity Manipulation': {"DFIntNewRunningBaseGravityReductionFactorHundredth": "1000", "DFIntFreeFallBalanceP": "-9999", "DFIntLandedBalanceD": "-2000"},
-            'Spin Character': {"DFIntRunningBaseOrientationP": "-14", "DFIntFreeFallOrientationP": "-14"},
-            'Ragdoll Control': {"DFIntGettingUpBalanceP": "0", "DFIntGettingUpBalanceD": "-10000"},
-            'Desync / Teleport': {"DFIntDataSenderRate": "-1", "DFIntS2PhysicsSenderRate": "10000000", "DFIntClientPacketMaxDelayMs": "1", "DFIntClientTickRate": "300", "DFIntNetworkSendRateMultiplier": "5", "DFIntPhysicsDelay": "0"},
-            'Hitbox Expand': {"FIntPGSPenetrationMarginMax": "2147483647", "FIntPGSPenetrationMarginMin": "2147483647", "DFIntAssemblyExtentsExpansionStudHundredth": "500"},
-            'Movement Break': {"FIntPGSAngularDampingPermillPersecond": "-10000", "FFlagHumanoidOnlySetCollisionsOnStateChangeDefaultIsEnabled": "False", "FFlagHumanoidParallelFasterSetCollision": "True", "DFFlagSimHumanoidPhysics": "True"},
-            'ALL Physics Combined': {"DFIntDebugSimPhysicsSteppingMethodOverride": "10000000", "DFIntTaskSchedulerTargetFps": "9999", "FFlagDebugSimIntegrationStabilityTesting": "True", "DFIntNewRunningBaseGravityReductionFactorHundredth": "1000", "DFIntNewRunningBaseAltitudeP": "49534", "DFIntMaxAltitudePDStickHipHeightPercent": "-200", "DFIntNewRunningBaseAltitudeD": "0", "FIntPGSPenetrationMarginMax": "2147483647", "FIntPGSPenetrationMarginMin": "2147483647", "DFIntAssemblyExtentsExpansionStudHundredth": "-150", "DFIntSHCellMinSizeAsBitShift": "4", "DFIntUnstickForceAttackInTenths": "-1", "DFIntMaximumUnstickForceInGs": "-1", "DFIntUnstickForceDecayInTenths": "-1", "DFIntFreeFallBalanceP": "-9999", "DFIntLandedBalanceD": "-2000", "DFIntRunningBaseOrientationP": "-14", "DFIntFreeFallOrientationP": "-14", "DFIntGettingUpBalanceP": "0", "DFIntGettingUpBalanceD": "-10000", "DFIntDataSenderRate": "-1", "DFIntS2PhysicsSenderRate": "10000000", "FIntPGSAngularDampingPermillPersecond": "-10000", "FFlagHumanoidOnlySetCollisionsOnStateChangeDefaultIsEnabled": "False", "FFlagHumanoidParallelFasterSetCollision": "True", "DFFlagSimHumanoidPhysics": "True", "DFIntSolidFloorPercentForceApplication": "-1000", "DFIntAirControllerTurningResponsiveness": "2147483647", "DFIntMaximumFreefallMoveTimeInTenths": "1000"},
-            'Potato Graphics (Max FPS)': {"DFIntTaskSchedulerTargetFps": "2147483647", "DFFlagTextureQualityOverrideEnabled": "True", "DFIntTextureQualityOverride": "0", "FIntTextureCompositorLowResFactor": "1", "FIntDebugTextureManagerSkipMips": "-1", "DFIntTextureCompositorActiveJobs": "0", "FIntFRMMaxGrassDistance": "0", "FIntSSAOMipLevels": "0", "DFIntDebugFRMQualityLevelOverride": "1", "FIntViewportFrameMaxSize": "0", "DFIntCSGLevelOfDetailSwitchingDistance": "0", "FIntCSGVoxelizerFadeRadius": "0", "FIntTerrainArraySliceSize": "0", "DFFlagDebugPerfMode": "True", "FFlagDebugDontRenderScreenGui": "True", "FIntSSAO": "0", "FIntRenderShadowIntensity": "0", "FFlagDisablePostFx": "True", "FFlagDebugSkyGray": "True", "DFFlagDebugRenderForceTechnologyVoxel": "True", "FFlagAdServiceEnabled": "False", "DFIntCSGLevelOfDetailSwitchingDistanceL12": "0", "DFIntCSGLevelOfDetailSwitchingDistanceL23": "0", "DFIntCSGLevelOfDetailSwitchingDistanceL34": "0"},
-            'Remove All Textures': {"FIntDebugTextureManagerSkipMips": "-1", "DFFlagTextureQualityOverrideEnabled": "True", "DFIntTextureQualityOverride": "0", "FIntTextureCompositorLowResFactor": "1", "DFIntTextureCompositorActiveJobs": "0", "FFlagMSRefactor5": "False", "FStringPartTexturePackTablePre2022": "", "FStringTerrainMaterialTable2022": "", "FIntFRMMaxGrassDistance": "0", "FIntRenderShadowIntensity": "0"},
-            'No Shadows + No Grass': {"FFlagNewLightAttenuation": "False", "FIntRenderShadowIntensity": "0", "DFFlagDebugPauseVoxelizer": "True", "FIntCSGVoxelizerFadeRadius": "0", "FIntFRMMaxGrassDistance": "0", "FIntFRMMinGrassDistance": "0", "FIntRenderGrassDetailStrands": "0", "FIntRenderGrassHeightScaler": "0", "DFFlagDebugRenderForceTechnologyVoxel": "True", "FFlagDebugSkyGray": "True"},
-            'Animation Control': {"DFIntAirControllerTurningResponsiveness": "2147483647", "DFIntMaximumFreefallMoveTimeInTenths": "1000", "DFIntSolidFloorPercentForceApplication": "-1000"},
-            'Desync Advanced': {"DFIntDataSenderRate": "-1", "DFIntS2PhysicsSenderRate": "10000000", "DFIntClientPacketMaxDelayMs": "1", "DFIntClientTickRate": "300", "DFIntNetworkSendRateMultiplier": "5", "DFIntPhysicsDelay": "0", "DFIntMaxDataPacketPerSend": "2147483647"},
-            'FPS Uncap (2147M)': {"DFIntTaskSchedulerTargetFps": "2147483647", "FFlagTaskSchedulerLimitTargetFpsTo2402": "False"},
-            'Anti Telemetry': {"FFlagDebugDisableTelemetryEphemeralCounter": "True", "FFlagDebugDisableTelemetryEphemeralStat": "True", "FFlagDebugDisableTelemetryEventIngest": "True", "FFlagDebugDisableTelemetryPoint": "True", "FFlagDebugDisableTelemetryV2Counter": "True", "FFlagDebugDisableTelemetryV2Event": "True", "FFlagDebugDisableTelemetryV2Stat": "True"},
-            'ALL Performance Combined': {"DFIntTaskSchedulerTargetFps": "2147483647", "FFlagTaskSchedulerLimitTargetFpsTo2402": "False", "DFFlagTextureQualityOverrideEnabled": "True", "DFIntTextureQualityOverride": "0", "FIntTextureCompositorLowResFactor": "1", "FIntDebugTextureManagerSkipMips": "-1", "DFIntTextureCompositorActiveJobs": "0", "FIntFRMMaxGrassDistance": "0", "FIntSSAOMipLevels": "0", "DFIntDebugFRMQualityLevelOverride": "1", "FIntViewportFrameMaxSize": "0", "DFIntCSGLevelOfDetailSwitchingDistance": "0", "FIntCSGVoxelizerFadeRadius": "0", "FIntTerrainArraySliceSize": "0", "DFFlagDebugPerfMode": "True", "FFlagDebugDontRenderScreenGui": "True", "FIntSSAO": "0", "FIntRenderShadowIntensity": "0", "FFlagDisablePostFx": "True", "FFlagDebugSkyGray": "True", "DFFlagDebugRenderForceTechnologyVoxel": "True", "FFlagAdServiceEnabled": "False", "FFlagDebugDisableTelemetryEphemeralCounter": "True", "FFlagDebugDisableTelemetryEphemeralStat": "True", "FFlagDebugDisableTelemetryEventIngest": "True", "FFlagDebugDisableTelemetryPoint": "True", "FFlagDebugDisableTelemetryV2Counter": "True", "FFlagDebugDisableTelemetryV2Event": "True", "FFlagDebugDisableTelemetryV2Stat": "True", "DFIntCSGLevelOfDetailSwitchingDistanceL12": "0", "DFIntCSGLevelOfDetailSwitchingDistanceL23": "0", "DFIntCSGLevelOfDetailSwitchingDistanceL34": "0", "FIntFRMMinGrassDistance": "0", "FIntRenderGrassDetailStrands": "0", "FIntRenderGrassHeightScaler": "0"},
             'TSB - Best FFlags For Fps & Ping': {"SFFlagGraphicsOptimizationModePerformanceScalePercent": "100", "FFlagRenderSkipReadingShaderData": "True", "DFFlagAnalyticsServiceEnabled": "False", "DFIntLuaGcBoost": "100", "FStringTextureFormatFilterString": "", "FFlagDebugDisableTelemetryEphemeralStat": "True", "DFIntRaknetBandwidthPingSendEveryXSeconds": "1", "FFlagLuaAppExitModal2": "False", "DFStringRobloxAnalyticsSubDomain": "opt-out", "SFFlagRobloxTelemetryClientDisconnectPointsThrottleHundredthsPercent": "False", "FStringDisableAECIxpLayer": "True", "DFIntLogChunkSize": "1", "SFFlagRobloxTelemetryV2PointAdatpterTrafficPercent": "False", "FLogIXPGraphicsOptimizationModeQualityScale": "0", "FFlagOptimizeNetworkTransport": "True", "DFIntDebugFRMQualityLevelOverride": "1", "FFlagDebugForceFutureIsBrightPhase3": "True", "DFIntCSGLevelOfDetailSwitchingDistance": " 1", "DFFlagDisableDPIScale": "True", "SFFlagRobloxTelemetryThrottlingRenderFidelityOnTime": "False", "FIntRenderLocalLightUpdatesMin": "1", "SFFlagRobloxTelemetryBatchedReporterTimerIntervalMs": "False", "FIntBootstrapperTelemetryReportingHundredthsPercentage": "0", "DFIntServerTickRate": "60", "DFFlagDebugSkipMeshVoxelizer": "True", "DFStringCrashUploadToBacktraceMacPlayerToken": "null", "DFIntRakNetNakResendDelayRttPercent": "50", "DFIntRenderingThrottleDelayInMS": "1", "DFIntTimestepArbiterThresholdCFLThou": "300", "DFFlagGpuVsCpuBoundTelemetry": "False", "FFlagLimitSleeps": "True", "FFlagDebugGraphicsPreferD3D11": "True", "DFIntUserIdPlayerNameCacheSize": "33554432", "FIntCSGVoxelizerFadeRadius": "0", "FFlagDebugForceFutureIsBrightPhase2": "True", "DFFlagDebugEnableInterpolationVisualizer": "True", "DFStringTelegrafHTTPTransportUrl": "http://opt-out.roblox.com", "FFlagEnableInGameMenuChrome": "True", "FFlagDebugForceGenerateHSR": "True", "DFStringAltTelegrafHTTPTransportUrl": "http://opt-out.roblox.com", "DFStringRobloxAnalyticsURL": "http://opt-out.roblox.com", "FStringInGameMenuChromeForcedUserIds": "1353919681", "FIntFRMMinGrassDistance": "0", "SFFlagRobloxTelemetryCreationDBInstanceGUIDInvalidEvent": "False", "FFlagChatTranslationSettingEnabled3": "false", "FIntModelLodDetailed": "-1", "DFIntDefaultTimeoutTimeMs": "10000", "FFlagDebugRenderingSetDeterministic": "True", "SFFlagPerformanceControlTextureQualityBestUtility": "False", "SFFlagRobloxTelemetryMarketplaceDeprecatedSubscriptionFuncUseThrottleHundredthsPercent": "False", "SFFlagRobloxTelemetryCreationDBPropChangesDetail": "False", "FFlagEnableVisBugChecks27": "True", "FIntDebugTextureManagerSkipMips": "2", "DFIntNetworkCluster": "0", "FIntRenderShadowIntensity": "0", "FLogDisableAECVariantParam": "True", "DFIntHttpCurlConnectionCacheSize": "134217728", "DFStringTelemetryV2Url": "null", "DFFlagGraphicsQualityUsageTelemetry": "False", "FFlagDebugDisableVideoVorbisDecoder2": "True", "DFIntRaknetBandwidthInfluxHundredthsPercentageV2": "10000", "FLogDisableAECIxpLayer": "Tru", "DFStringCrashUploadToBacktraceWindowsPlayerToken": "null", "DFFlagDebugPauseVoxelizer": "True", "DFIntMaxProcessPacketsStepsPerCyclic": "5000", "FFlagDebugDisableVideoVorbisDecoder": "True", "SFFlagPerformanceControlEventBasedTelemetryTunableChangeEventNumReportsPerSecond": "False", "DFFlagTaskSchedulerAvoidSleep": "True", "DFIntMaxProcessPacketsStepsAccumulated": "0", "SFFlagRobloxTelemetryClientDisconnectEventsThrottleHundredthsPercent": "False", "FFlagDebugDisableTelemetryEphemeralCounter": "True", "DFIntRakNetResendRttMultiple": "1", "FFlagScreenGui3dRayHitPointFix": "True", "DFFlagEnableTexturePreloading": "True", "DFIntWaitOnRecvFromLoopEndedMS": "100", "FIntFontSizePadding": "3", "FFlagEnableAccessibilitySettingsAPIV2": "True", "FFlagDebugDisableOnScreenProfiler": "True", "FFlagRenderEnableGlobalInstancingD3D10": "True", "FIntRobloxGuiBlurIntensity": "0", "FFlagCommitToGraphicsQualityFix": "True", "DFIntRakNetMtuValue2InBytes": "1240", "FFlagDebugDisableTelemetryEventIngest": "True", "SFFlagPerformanceControlEventBasedTelemetryRateLimiterDefaultRegen": "False", "FFlagDebugGraphicsPreferD3D11FL10": "True", "FFlagDisableIxpUserFetchWithoutCookie": "True", "DFStringLightstepHTTPTransportUrlHost": "null", "DFIntUserIdPlayerNameLifetimeSeconds": "86400", "FFlagErrorPromptResizesHeight": "False", "DFFlagEnableFmodErrorsTelemetry": "False", "DFIntServerPhysicsUpdateRate": "60", "FIntFullscreenTitleBarTriggerDelayMillis": "3600000", "FFlagDisableOldCookieManagementSticky": "True", "FFlagPPDebugLogging": "True", "DFFlagDebugEnableRomarkService": "False", "FFlagNewCameraControls": "True", "DFIntLightstepHTTPTransportHundredthsPercent2": "0", "DFStringHttpPointsReporterUrl": "http://opt-out.roblox.com", "FFlagDebugGraphicsDisableMetal": "true", "FFlagEnableAccessibilitySettingsInExperienceMenu2": "True", "DFIntCanHideGuiGroupId": "32380007", "DFIntCSGLevelOfDetailSwitchingDistanceL12": "2", "DFIntReportOutputDeviceInfoRateHundredthsPercentage": "0", "DFIntPerformanceControlTextureQualityBestUtility": "-1", "DFIntRakNetMtuValue3InBytes": "1200", "FFlagSmoothClusterDirtyFlagFix": "True", "SFFlagRobloxTelemetryBatchSizeThreshold": "False", "FFlagBatchAssetApi": "True", "FFlagDebugDisableStudioQtErrorAssert": "True", "DFFlagDisableFastLogTelemetry": "True", "FFlagNewLightAttenuation": "True", "FStringWhitelistVerifiedUserId": "411955176", "FFlagUserShowGuiHideToggles": "True", "FFlagEnableAccessibilitySettingsEffectsInCoreScripts2": "True", "DFIntAnimationLodFacsDistanceMin": "0", "DFFlagRakNetUseSlidingWindow4": "True", "FFlagMSRefactor5": "False", "FFlagDebugDisableWebmAlphaSupport": "True", "FFlagOptimizeNetworkRouting": "True", "FFlagRenderDynamicResolutionScale": "True", "DFFlagQueueDataPingFromSendData": "True", "FFlagDebugDisableOptimizedBytecode": "True", "SFFlagPerformanceTelemetryGlobalThrottleHundredthsPercent": "False", "FFlagDebugGraphicsPreferVulkan": "True", "FFlagDebugDoNotLoadHumanoidSounds": "True", "FFlagEnableInGameMenuModernization": "False", "FFlagFastGPULightCulling3": "True", "FFlagOptimizeNetwork": "True", "FIntTerrainOTAMaxTextureSize": "1024", "FFlagAdServiceEnabled": "False", "FFlagAnimationClipMemCacheEnabled": "True", "DFIntHardwareTelemetryHundredthsPercent": "0", "FLogGraphicsDisableUnalignedDxtGPUNameBlacklist": "True", "FIntRenderLocalLightUpdatesMax": "1", "FFlagFixGraphicsQuality": "True", "DFIntTextureQualityOverride": "0", "SFFlagRobloxGuiBlurIntensity": "0", "FFlagEnableInGameMenuV3": "True", "DFIntNetworkPrediction": "120", "FFlagEnableSoundTelemetry": "False", "DFIntRakNetNakResendDelayMsMax": "100", "FFlagTaskSchedulerLimitTargetFpsTo2402": "False", "FFlagInGameMenuV1FullScreenTitleBar": "False", "DFIntWaitOnUpdateNetworkLoopEndedMS": "100", "DFIntRakNetLoopMs": "1", "FFlagDisableChromeFollowupUnibar": "True", "FFlagDebugForceFSMCPULightCulling": "True", "FFlagHandleAltEnterFullscreenManually": "False", "DFIntRakNetClockDriftAdjustmentPerPingMillisecond": "100", "SFFlagRobloxTelemetryPointV2ProdTrafficPercent": "False", "FFlagEnableInGameMenuControls": "False", "DFFlagEnableHardwareTelemetry": "False", "FIntDefaultMeshCacheSizeMB": "256", "FFlagLuaAppSystemBar": "False", "FFlagDebugLightGridShowChunks": "False", "DFIntMegaReplicatorNetworkQualityProcessorUnit": "10", "FFlagPreloadTextureItemsOption4": "True", "SFFlagRobloxTelemetryStatThresholdHundredthsPercent": "False", "DFStringLightstepToken": "null", "FIntTargetRefreshRate": "9999", "DFFlagTextureQualityOverrideEnabled": "True", "FIntTaskSchedulerThreadMin": "3", "FIntRuntimeMaxNumOfThreads": "2400", "FFlagEnablePlayerViewBoundingBoxSizeDamping": "True", "FFlagDebugAvatarTracking": "True", "FFlagDebugGraphicsPreferOpenGL": "True", "DFFlagTrackingGcStats": "False", "FFlagEnableAccessibilitySettingsEffectsInExperienceChat": "True", "FFlagDisableMostRecentlyUsed": "True", "FFlagDebugDisableTelemetryV2Event": "True", "DFFlagSimReportCPUInfo": "False", "FFlagOptimizeServerTickRate": "True", "FIntRenderGrassHeightScaler": "0", "FFlagRenderDebugCheckThreading2": "True", "SFFlagRobloxTelemetryAvatarMetricsTrackSingularAssetRequestThrottleHundredthsPercent": "False", "FIntDebugForceMSAASamples": "1", "FFlagEnableIXPInGame": "True", "DFStringAnalyticsEventStreamUrlEndpoint": "opt-out", "FStringErrorUploadToBacktraceBaseUrl": "http://opt-out.roblox.com", "SFFlagPerformanceControlTextureQualityHardcodeWeight": "0", "FLogGraphicsGLGpuExcludeListSuperHQShaders": "True", "SFFlagPerformanceControlEventBasedTelemetryTunableChangeEventRatePoints": "False", "DFFlagEnableGCapsHardwareTelemetry": "False", "DFIntNetworkLatencyTolerance": "1", "SFFlagPerformanceControlEventBasedTelemetryTunableChangeEventRateEventIngest": "False", "DFFlagBrowserTrackerIdTelemetryEnabled": "False", "FFlagDebugDisplayUnthemedInstances": "True", "FIntRenderGrassDetailStrands": "0", "DFFlagEnableLightstepReporting2": "False", "FFlagGraphicsEnableD3D10Compute": "True", "DFFlagDebugAnalyticsSendUserId": "False", "FLogIXPPerformanceControlStreamingTunableMaxUtility": "True", "FIntRobloxTelemetry": "0", "FIntRobloxMainWindow": "190000", "SFFlagRobloxTelemetrySharedStringReplicationPointsThrottleHundredthsPercent": "False", "DFFlagDebugRenderForceTechnologyVoxel": "True", "FIntRakNetDatagramMessageIdArrayLength": "1024", "DFIntRakNetNakResendDelayMs": "10", "DFIntCSGLevelOfDetailSwitchingDistanceL34": "4", "FFlagGraphicsASTC": "True", "FFlagEnableChromePinnedChat": "True", "SFFlagRobloxTelemetryRccDisconnectPointsThrottleHundredthsPercent": "False", "FFlagDebugGraphics": "False", "FFlagRenderFixFog": "True", "DFIntTaskSchedulerTargetFps": "1000", "FFlagSimAdaptiveMinorOptimizations": "True", "DFFlagAudioDeviceTelemetry": "False", "FFlagDisableChromePinnedChat": "True", "FStringIXPGraphicsOptimizationModePerformanceScale": "100", "DFIntGoogleAnalyticsLoadPlayerHundredth": "0", "DFIntPlayerNetworkUpdateQueueSize": "20", "SFFlagRobloxTelemetryAdTeleportPromptInteractionThrottleHundredthsPercent": "False", "FFlagDebugGraphicsD3D11DisableDriverThreading": "True", "FFlagUserFixBubbleChatText": "True", "FFlagRenderEnableGlobalInstancingGPUWhitelistAndroid": "True", "SFFlagGraphicsOptimizationModeQualityScalePercent": "100", "FFlagEnableQuickGameLaunch": "False", "DFIntReportRecordingDeviceInfoRateHundredthsPercentage": "0", "FIntSmoothClusterTaskQueueMaxParallelTasks": "20", "FIntTerrainArraySliceSize": "0", "FIntRakNetResendBufferArrayLength": "128", "FStringNote": "CHANGE TO false IF YOU DONT WANNA HAVE GRAY SKYBOX", "DFIntS2PhysicsSenderRate": "10000", "DFFlagDebugVisualizeAllPropertyChanges": "True", "DFFlagAggCpuMemRCC": "True", "FFlagGpuGeometryManager7": "True", "FLogIXPGraphicsOptimizationModePerformanceScale": "100", "DFIntMaxFrameBufferSize": "4", "SFFlagPerformanceControlEventBasedTelemetryDefaultSamplingRateEventIngest": "False", "FFlagDontCreatePingJob": "True", "DFIntClientLightingTechnologyChangedTelemetryHundredthsPercent": "0", "FFlagHSRClusterImprovement": "True", "FFlagDebugGraphicsGLDisableDiscard": "True", "FFlagEnableMenuModernizationABTest": "False", "FFlagDebugForceModelMeshRendering": "False", "FStringTopBarBadgeLearnMoreLink": "https://youtube.com/@KiwisASkid/", "FLogDisableAGCIxpLayer": "True", "FFlagRenderNoLowFrmBloom": "True", "FFlagDebugDisableTelemetryPoint": "True", "FIntFRMMaxGrassDistance": "0", "SFFlagPerformanceControlEventBasedTelemetryEffectPredictionEventRateEventIngest": "False", "FFlagGuiHidingApiSupport2": "True", "DFIntPlayerNetworkUpdateRate": "60", "FFlagDisableNewIGMinDUA": "True", "FFlagDebugGraphicsForceGL2": "True", "DFStringAltHttpPointsReporterUrl": "http://opt-out.roblox.com", "FIntRenderTextureCompositor": "0", "DFFlagCloneOptimizations": "True", "FFlagDisableChromeFollowupFTUX": "True", "DFIntOptimizePingThreshold": "50", "DFIntRakNetMtuValue1InBytes": "1280", "FFlagDebugCheckRenderThreading": "True", "FIntRenderShadowmapBias": "0", "FFlagReduceDirtyFlagSettings": "True", "FFlagDisablePostFx": "True", "FStringPerformanceSendMeasurementAPISubdomain": "opt-out", "DFFlagBatchAssetApiNoFallbackOnFail": "False", "DFIntAnimationLodFacsDistanceMax": "0", "SFFlagPerformanceControlEventBasedTelemetryDefaultSamplingRatePoints": "False", "FLogNetwork": "7", "FFlagDisableChromeFollowupOcclusion": "True", "SFFlagRobloxTelemetryStatV2POCRandomRange": "False", "FIntUITextureMaxRenderTextureSize": "1024", "DFIntRobloxTelemetryBatchSizeThreshold": "0", "DFIntDebugRestrictGCDistance": "1", "DFIntMaxProcessPacketsJobScaling": "10000", "DFIntPerformanceControlTextureQualityExponentTenThousandths": "0", "FFlagDebugDisplayFPS": "False", "SFFlagRobloxTelemetryRealtimeEventsThrottleHundredthsPercent": "False", "DFIntGraphicsOptimizationModePerformanceScalePercent": "10000000", "DFIntCodecMaxIncomingPackets": "100", "FIntRomarkStartWithGraphicQualityLevel": "1", "FFlagPreloadAllFonts": "True", "FIntSimWorldTaskQueueParallelTasks": "20", "FStringPartTexturePackTable2022": "{\"foil\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[238,238,238,255]},\"asphalt\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[227,227,228,234]},\"basalt\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[160,160,158,238]},\"brick\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[229,214,205,227]},\"cobblestone\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[218,219,219,243]},\"concrete\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[225,225,224,255]},\"crackedlava\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[76,79,81,156]},\"diamondplate\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[210,210,210,255]},\"fabric\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[221,221,221,255]},\"glacier\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[225,229,229,243]},\"glass\":{\"ids\":[\"rbxassetid://9873284556\",\"rbxassetid://9438453972\"],\"color\":[254,254,254,7]},\"granite\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[210,206,200,255]},\"grass\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[196,196,189,241]},\"ground\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[165,165,160,240]},\"ice\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[235,239,241,248]},\"leafygrass\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[182,178,175,234]},\"limestone\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[250,248,243,250]},\"marble\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[181,183,193,249]},\"metal\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[226,226,226,255]},\"mud\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[193,192,193,252]},\"pavement\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[218,218,219,236]},\"pebble\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[204,203,201,234]},\"plastic\":{\"ids\":[\",\"rbxassetid://0\"],\"color\":[255,255,255,255]},\"rock\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[211,211,210,248]},\"corrodedmetal\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[206,177,163,180]},\"salt\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[249,249,249,255]},\"sand\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[218,216,210,240]},\"sandstone\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[241,234,230,246]},\"slate\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[235,234,235,254]},\"snow\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[239,240,240,255]},\"wood\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[217,209,208,255]},\"woodplanks\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[207,208,206,254]}}", "FStringIXPGraphicsOptimizationModeQualityScale": "100", "FFlagEnableMenuControlsABTest": "False", "DFFlagUseVisBugChecks": "True", "FFlagGameBasicSettingsFramerateCap5": "false", "FFlagDisableChromeUnibar": "True", "SFFlagRobloxTelemetryStatV2POCRandomOffset": "False", "SFFlagPerformanceControlEventBasedTelemetryEffectPredictionEventNumReportsPerSecond": "False", "SFFlagOpenXrASW": "True", "SFFlagPerformanceTelemetryQueueProcessLimit": "False", "FFlagRenderLegacyShadowsQualityRefactor": "False", "DFFlagImprovedGuiFilter": "True", "FStringCredit": "Potato Mode | @KiwisASkid on YT", "DFIntCullFactorPixelThresholdShadowMapLowQuality": "2147483647", "FStringCoreScriptBacktraceErrorUploadToken": "null", "SFFlagPerformanceControlTextureQualityExponentTenThousandths": "0", "DFStringCrashUploadToBacktraceBaseUrl": "http://opt-out.roblox.com", "FIntMeshContentProviderForceCacheSize": "268435456", "DFFlagHSRForceClearOtherData": "True", "FIntRenderLocalLightFadeInMs": "0", "FFlagScreenGuiRaycastsFixLag": "True", "FIntMeshLODDetails": "-1", "DFIntPhysicsAnalyticsHighFrequencyIntervalSec": "20", "FIntGraphics": "0", "FFlagCoreGuiTypeSelfViewPresent": "False", "FStringPartTexturePackTablePre2022": "{\"foil\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[255,255,255,255]},\"brick\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[204,201,200,232]},\"cobblestone\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[212,200,187,250]},\"concrete\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[208,208,208,255]},\"diamondplate\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[170,170,170,255]},\"fabric\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[105,104,102,244]},\"glass\":{\"ids\":[\"rbxassetid://7547304948\",\"rbxassetid://7546645118\"],\"color\":[254,254,254,7]},\"granite\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[113,113,113,255]},\"grass\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[165,165,159,255]},\"ice\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[255,255,255,255]},\"marble\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[199,199,199,255]},\"metal\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[199,199,199,255]},\"pebble\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[208,208,208,255]},\"corrodedmetal\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[159,119,95,200]},\"sand\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[220,220,220,255]},\"slate\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[193,193,193,255]},\"wood\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[227,227,227,255]},\"woodplanks\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[212,209,203,255]},\"asphalt\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[123,123,123,234]},\"basalt\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[154,154,153,238]},\"crackedlava\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[74,78,80,156]},\"glacier\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[226,229,229,243]},\"ground\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[114,114,112,240]},\"leafygrass\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[121,117,113,234]},\"limestone\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[235,234,230,250]},\"mud\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[130,130,130,252]},\"pavement\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[142,142,144,236]},\"rock\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[154,154,154,248]},\"salt\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[220,220,221,255]},\"sandstone\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[174,171,169,246]},\"snow\":{\"ids\":[\"rbxassetid://0\",\"rbxassetid://0\"],\"color\":[218,218,218,255]}}", "DFIntLargePacketQueueSizeCutoffMB": "1000", "DFIntTextureCompositorActiveJobs": "0", "FFlagRenderGpuTextureCompressor": "True", "DFStringLightstepHTTPTransportUrlPath": "null", "DFIntPhysicsReceiveNumParallelTasks": "20", "FFlagDisableChromeDefaultOpen": "True", "DFIntCSGLevelOfDetailSwitchingDistanceL23": "3", "FFlagReconnectDisabled": "True", "FFlagEnableInGameMenuChromeABTest3": "False", "FFlagLightgridCPUAsyncUpdate": "True", "FFlagEnableMenuModernizationABTest2": "False", "SFFlagRobloxTelemetryRealtimeConnectionEventsThrottleHundredthsPercent": "False", "FLogFeature_DisableOldCookieManagementSticky": "True", "FIntGraphicsTextureReductionD3D11": "100", "SFFlagRobloxTelemetryRccDisconnectEventsThrottleHundredthsPercent": "False", "SFFlagPerformanceTelemetrySketchK": "False", "FFlagDebugDisableTelemetryV2Counter": "True", "DFIntCodecMaxOutgoingFrames": "10000", "FIntLmsClientRollout2": "0", "FFlagLuaAppExitModalDoNotShow": "True", "DFIntCullFactorPixelThresholdShadowMapHighQuality": "2147483647", "FIntEmotesAnimationsPerPlayerCacheSize": "16777216", "SFFlagPerformanceControlEventBasedTelemetryEffectPredictionEventRatePoints": "False", "FFlagRenderEnableGlobalInstancingD3D11": "True", "FFlagDebugDisableTelemetryV2Stat": "True", "SFFlagRobloxTelemetryCreationDBInstanceStats": "False", "DFFlagDebugPerfMode": "False", "DFIntAnimationLodFacsVisibilityDenominator": "0", "SFFlagRolloutEnrollmentExpirationMinutes": "False", "FFlagRenderCBRefactor": "True", "DFIntConnectionMTUSize": "900", "SFFlagPerformanceTelemetryReportIntervalSeconds": "False", "FFlagEnableV3MenuABTest3": "True", "FFlagTopBarUseNewBadge": "True"},
             'Best Fps Boost - By Sword': {"FLogNetwork": "7", "TaskSchedulerLimitTargetFpsTo2402": "False", "FIntFRMMaxGrassDistance": "0", "DFIntMaxFrameBufferSize": "4", "FIntRobloxGuiBlurIntensity": "0", "PerformanceControlTextureQualityBestUtility": "1", "TaskSchedulerTargetFps": "9999999", "FIntDebugTextureManagerSkipMips": "44", "CSGLevelOfDetailSwitchingDistance": "1", "DFIntMaxDataPacketPerSend": "2147483647", "CSGLevelOfDetailSwitchingDistanceL34": "1", "DebugTextureManagerSkipMips": "44", "DoNotSkipMipsBasedOnSystemMemoryPS": "True", "FFlagFastGPULightCulling3": "True", "DFFlagDebugRenderForceTechnologyVoxel": "True", "FFlagHandleAltEnterFullscreenManually": "False", "FFlagEnableBubbleChatFromChatService": "False", "FIntRenderShadowmapBias": "0", "CSGLevelOfDetailSwitchingDistanceL12": "1", "DFFlagDebugPerfMode": "True", "FStringVoiceBetaBadgeLearnMoreLink": "null", "DebugLimitMinTextureResolutionWhenSkipMips": "9999999999999999", "FIntTerrainArraySliceSize": "8", "FFlagGraphicsTextureQuality": "1", "FFlagDebugForceFSMCPULightCulling": "True", "DFIntRenderClampRoughnessMax": "225", "FFlagGraphicsGLEnableSuperHQShadersExclusion": "False", "FIntFRMMinGrassDistance": "0", "FIntRenderGrassDetailStrands": "0", "FIntRenderGrassHeightScaler": "0", "DFIntDebugDynamicRenderKiloPixels": "400", "DFIntTextureQualityOverride": "1", "CSGLevelOfDetailSwitchingDistanceL23": "1", "EnablePowerTraceModule": "True", "FIntRenderLocalLightUpdatesMax": "1", "FIntRenderLocalLightUpdatesMin": "1", "FFlagPreloadTextureItemsOption4": "True", "DFFlagTextureQualityOverrideEnabled": "True", "TextureQualityOverrideEnabled": "True", "TerrainArraySliceSize": "1", "FIntCameraFarZPlane": "68", "DFFlagDisableDPIScale": "True", "TextureQualityOverride": "1", "FIntDebugForceMSAASamples": "1", "FFlagUserPreventOldBubbleChatOverlap": "False", "FIntDebugFRMOptionalMSAALevelOverride": "1", "DFIntTextureQualityLevel": "1", "FFlagEnableFPSAndFrameTime": "True", "RenderUseTextureManager224": "False", "FFlagDebugGraphicsPreferD3D11": "True"},
             'Fast Dash FFlags (idk work)': {"DFFlagPreventReturnOfElevatedPhysicsFPS": "False", "DFIntWaitOnUpdateNetworkLoopEndedMS": "0", "FIntFontSizePadding": "2", "DFIntWaitOnRecvFromLoopEndedMS": "0", "DFFlagQueueDataPingFromSendData": "True", "FIntRenderShadowIntensity": "0", "DFFlagDebugRenderForceTechnologyVoxel": "True", "FFlagHandleAltEnterFullscreenManually": "False", "DFIntDataSenderMaxBandwidthBps": "38760", "FFlagDebugForceFutureIsBrightPhase3": "False", "DFIntDebugDefaultTargetWorldStepsPerFrame": "360", "DFFlagReducePhysicsReceiverAllocations": "false", "DFFlagUseAsyncNetworkLoop": "True", "DFIntS2PhysicsSenderRate": "38760", "FIntTerrainArraySliceSize": "0", "DFIntPhysicsSenderMaxBandwidthBpsScaling": "38760", "DFIntDataSenderMaxBandwidthBpsMultiplier": "38760", "DFIntTaskSchedulerTargetFps": "9999", "DFIntMaxNetworkUpdateDelayMS": "0", "FFlagDisablePostFx": "True", "DFIntRakNetNakResendDelayMs": "0", "DFIntPhysicsSenderMaxBandwidthBps": "38760", "FLogNetwork": "7", "FFlagDebugSimIntegrationStabilityTesting": "True", "DFIntDataSenderRate": "38760", "DFIntPhysicsNOUCountHundredth": "38760", "DFIntServerPhysicsUpdateRate": "10000", "FIntFullscreenTitleBarTriggerDelayMillis": "18000000", "DFFlagTextureQualityOverrideEnabled": "True", "DFIntCanHideGuiGroupId": "32380007", "FIntDebugForceMSAASamples": "1", "DFFlagDisableDPIScale": "True", "DFFlagLowLatencyPacketSend": "True", "FFlagDebugForceFutureIsBrightPhase2": "False", "DFIntRakNetNakResendDelayMsMax": "1", "DFFlagNetworkPacketBatchingEnabled": "False"},
@@ -6016,8 +6079,15 @@ body{font-family:'Inter',sans-serif;background:var(--bg-main, #0d0d0d);color:#e0
         <div class="home-card">
           <div class="card-label">Roblox Version</div>
           <div class="card-value small" id="homeRobloxVersion">Checking...</div>
-          <div class="card-actions">
+          <div class="card-actions" style="flex-direction:column;gap:6px;align-items:stretch;">
             <span class="status-item"><span class="dot" id="homeRbxDot"></span>Roblox: <span class="val" id="homeRbxStatus">Checking...</span></span>
+            <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
+              <div id="homeRobloxExePath" style="flex:1;font-size:10px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px;" title="">No path set</div>
+              <button class="card-btn" onclick="browseRobloxExe()" style="padding:4px 8px;font-size:10px;white-space:nowrap;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/></svg>
+                Browse
+              </button>
+            </div>
           </div>
         </div>
         <div class="home-card">
@@ -6185,6 +6255,17 @@ body{font-family:'Inter',sans-serif;background:var(--bg-main, #0d0d0d);color:#e0
   <div class="section" id="section-3">
     <div class="section-header"><h2>Profiles</h2></div>
     <div id="profiles-scroll" style="height:100%;overflow-y:auto;display:flex;flex-direction:column;gap:16px;padding-right:8px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:8px;padding:10px 14px;">
+        <div>
+          <div style="font-size:12px;color:#fff;font-weight:500;">Multi-Import Mode</div>
+          <div style="font-size:10px;color:#666;margin-top:2px;">Import multiple profiles into the same tab (one after another)</div>
+        </div>
+        <label style="position:relative;display:inline-block;width:40px;height:22px;cursor:pointer;">
+          <input type="checkbox" id="multiImportToggle" onchange="toggleMultiImport(this.checked)" style="opacity:0;width:0;height:0;">
+          <span class="rpcSlider" style="position:absolute;top:0;left:0;right:0;bottom:0;background:#2a2a2a;border-radius:22px;transition:.3s;"></span>
+          <span class="rpcKnob" style="position:absolute;left:3px;top:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:.3s;"></span>
+        </label>
+      </div>
       <div>
         <div class="prof-section-title" style="font-size:14px;color:#fff;font-weight:600;margin-top:10px;border-bottom:1px solid #222;padding-bottom:5px;margin-bottom:8px;">Default Profiles</div>
         <div id="defaultProfilesList" style="display:flex;flex-direction:column;gap:8px;">Loading...</div>
@@ -6274,6 +6355,20 @@ body{font-family:'Inter',sans-serif;background:var(--bg-main, #0d0d0d);color:#e0
           </button>
         </div>
         <div id="versionsBadges" style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;"></div>
+      </div>
+      <div style="background:#0c0c0e;border:1px solid #1e1e24;border-radius:8px;padding:14px;margin-bottom:16px;">
+        <div style="font-size:10px;font-weight:600;color:#555;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px;">Roblox Executable Path</div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <div id="versionsExePath" style="flex:1;background:#0d0d0d;border:1px solid #1e1e24;border-radius:6px;color:#666;padding:8px 12px;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace;" title="">Auto-detected</div>
+          <button onclick="browseRobloxExeVersions()" class="ver-btn" style="display:flex;align-items:center;gap:5px;background:#1a1a1a;border:1px solid #2a2a2a;color:#ccc;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;transition:all .2s;white-space:nowrap;">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width:14px;height:14px;"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/></svg>
+            Browse
+          </button>
+          <button onclick="resetRobloxExePath()" class="ver-btn" style="display:flex;align-items:center;gap:5px;background:#1a1a1a;border:1px solid #2a2a2a;color:#f59e0b;padding:8px 12px;border-radius:6px;cursor:pointer;font-size:11px;transition:all .2s;white-space:nowrap;">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width:13px;height:13px;"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182"/></svg>
+            Reset
+          </button>
+        </div>
       </div>
       <div style="margin-bottom:16px;">
         <div style="font-size:10px;font-weight:600;color:#555;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px;">Launchers</div>
@@ -6384,41 +6479,33 @@ body{font-family:'Inter',sans-serif;background:var(--bg-main, #0d0d0d);color:#e0
       document.addEventListener('click',function(e){if(!document.getElementById('methodDropdown').contains(e.target)&&_methodMenuOpen){_methodMenuOpen=false;var m=document.getElementById('methodMenu');m.style.opacity='0';m.style.transform='translateY(-6px)';setTimeout(function(){m.style.display='none'},200);document.getElementById('methodArrow').style.transform=''}})
       </script>
 
-      <div style="border-top:1px solid #1a1a1a;padding-top:16px;margin-bottom:20px;">
-        <label style="font-size:13px;color:#ccc;display:block;margin-bottom:10px">Roblox Launch</label>
-        <div style="background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px;display:flex;flex-direction:column;gap:10px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;">
-            <div>
-              <div style="font-size:13px;color:#fff;font-weight:500;">Open Roblox on Apply</div>
-              <div style="font-size:11px;color:#666;margin-top:2px;">Automatically launch Roblox after applying flags</div>
-            </div>
-            <label style="position:relative;display:inline-block;width:40px;height:22px;cursor:pointer;">
-              <input type="checkbox" id="open_roblox_on_applyToggle" onchange="setSetting('open_roblox_on_apply', this.checked)" style="opacity:0;width:0;height:0;">
-              <span class="rpcSlider" style="position:absolute;top:0;left:0;right:0;bottom:0;background:#2a2a2a;border-radius:22px;transition:.3s;"></span>
-              <span class="rpcKnob" style="position:absolute;left:3px;top:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:.3s;"></span>
-            </label>
+      <div style="border-top:1px solid #1a1a1a;padding-top:20px;margin-bottom:28px;">
+        <label style="font-size:13px;color:#ccc;display:block;margin-bottom:10px">Advanced Cache Method</label>
+        <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px;margin-bottom:10px;">
+          <div>
+            <div style="font-size:13px;color:#fff;font-weight:500;">Open Roblox on Apply</div>
+            <div style="font-size:11px;color:#666;margin-top:2px;">Automatically launch Roblox after applying flags</div>
           </div>
+          <label style="position:relative;display:inline-block;width:40px;height:22px;cursor:pointer;">
+            <input type="checkbox" id="open_roblox_on_applyToggle" onchange="setSetting('open_roblox_on_apply', this.checked)" style="opacity:0;width:0;height:0;">
+            <span class="rpcSlider" style="position:absolute;top:0;left:0;right:0;bottom:0;background:#2a2a2a;border-radius:22px;transition:.3s;"></span>
+            <span class="rpcKnob" style="position:absolute;left:3px;top:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:.3s;"></span>
+          </label>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px;">
+          <div>
+            <div style="font-size:13px;color:#fff;font-weight:500;">Auto Reopen Roblox</div>
+            <div style="font-size:11px;color:#666;margin-top:2px;">Restart Roblox automatically after proxy shuts down</div>
+          </div>
+          <label style="position:relative;display:inline-block;width:40px;height:22px;cursor:pointer;">
+            <input type="checkbox" id="auto_reopen_robloxToggle" onchange="setSetting('auto_reopen_roblox', this.checked)" style="opacity:0;width:0;height:0;">
+            <span class="rpcSlider" style="position:absolute;top:0;left:0;right:0;bottom:0;background:#2a2a2a;border-radius:22px;transition:.3s;"></span>
+            <span class="rpcKnob" style="position:absolute;left:3px;top:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:.3s;"></span>
+          </label>
         </div>
       </div>
 
-      <div style="border-top:1px solid #1a1a1a;padding-top:16px;margin-bottom:20px;">
-        <label style="font-size:13px;color:#ccc;display:block;margin-bottom:10px">Auto Reopen</label>
-        <div style="background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;">
-            <div>
-              <div style="font-size:13px;color:#fff;font-weight:500;">Auto Reopen Roblox</div>
-              <div style="font-size:11px;color:#666;margin-top:2px;">Restart Roblox automatically after proxy shuts down</div>
-            </div>
-            <label style="position:relative;display:inline-block;width:40px;height:22px;cursor:pointer;">
-              <input type="checkbox" id="auto_reopen_robloxToggle" onchange="setSetting('auto_reopen_roblox', this.checked)" style="opacity:0;width:0;height:0;">
-              <span class="rpcSlider" style="position:absolute;top:0;left:0;right:0;bottom:0;background:#2a2a2a;border-radius:22px;transition:.3s;"></span>
-              <span class="rpcKnob" style="position:absolute;left:3px;top:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:.3s;"></span>
-            </label>
-          </div>
-        </div>
-      </div>
-
-      <div style="border-top:1px solid #1a1a1a;padding-top:16px;margin-bottom:20px;">
+      <div style="border-top:1px solid #1a1a1a;padding-top:20px;margin-bottom:28px;">
         <label style="font-size:13px;color:#ccc;display:block;margin-bottom:10px">Discord Rich Presence</label>
         <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px;">
           <div>
@@ -6433,9 +6520,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg-main, #0d0d0d);color:#e0
         </div>
       </div>
 
-      <div style="border-top:1px solid #1a1a1a;padding-top:16px;margin-bottom:20px;">
+      <div style="border-top:1px solid #1a1a1a;padding-top:20px;margin-bottom:28px;">
         <label style="font-size:13px;color:#ccc;display:block;margin-bottom:10px">Overlay / Visibility</label>
-        <div style="background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px;display:flex;flex-direction:column;gap:10px;">
+        <div style="background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px;">
           <div style="display:flex;align-items:center;justify-content:space-between;">
             <div>
               <div style="font-size:13px;color:#fff;font-weight:500;">Toggle UI Hotkey</div>
@@ -6447,14 +6534,13 @@ body{font-family:'Inter',sans-serif;background:var(--bg-main, #0d0d0d);color:#e0
               <button onclick="triggerOverlayToggle()" style="background:#1a1a1a;border:1px solid #2a2a2a;color:var(--accent, #fff);padding:6px 12px;border-radius:5px;cursor:pointer;font-size:12px;transition:0.2s;">Test</button>
             </div>
           </div>
-          <div id="hotkeyBindingHint" style="font-size:11px;color:var(--accent, #fff);display:none;">Press any key to set as hotkey...</div>
+          <div id="hotkeyBindingHint" style="font-size:11px;color:var(--accent, #fff);display:none;margin-top:6px;">Press any key to set as hotkey...</div>
         </div>
       </div>
 
-      <div style="border-top:1px solid #1a1a1a;padding-top:16px;margin-bottom:20px;">
+      <div style="border-top:1px solid #1a1a1a;padding-top:20px;margin-bottom:28px;">
         <label style="font-size:13px;color:#ccc;display:block;margin-bottom:10px">Advanced Injection</label>
-
-        <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px;margin-bottom:8px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px;margin-bottom:10px;">
           <div>
             <div style="font-size:13px;color:#fff;font-weight:500;">Auto Apply</div>
             <div style="font-size:11px;color:#666;margin-top:2px;">Automatically applies flags when Roblox is detected and you have flags imported</div>
@@ -6465,8 +6551,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg-main, #0d0d0d);color:#e0
             <span class="rpcKnob" style="position:absolute;left:3px;top:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:.3s;"></span>
           </label>
         </div>
-
-        <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px;margin-bottom:8px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px;margin-bottom:10px;">
           <div>
             <div style="font-size:13px;color:#fff;font-weight:500;">Re-apply (Keep Flags)</div>
             <div style="font-size:11px;color:#666;margin-top:2px;">Periodically re-applies flags at the interval you set below</div>
@@ -6477,8 +6562,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg-main, #0d0d0d);color:#e0
             <span class="rpcKnob" style="position:absolute;left:3px;top:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:.3s;"></span>
           </label>
         </div>
-
-        <div id="reapplyMsRow" style="display:none;background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px;margin-bottom:8px;">
+        <div id="reapplyMsRow" style="display:none;background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px;">
           <div style="display:flex;align-items:center;justify-content:space-between;">
             <div>
               <div style="font-size:13px;color:#fff;font-weight:500;">Re-apply Interval</div>
@@ -6492,39 +6576,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg-main, #0d0d0d);color:#e0
         </div>
       </div>
 
-      <div style="border-top:1px solid #1a1a1a;padding-top:16px;margin-bottom:20px;">
-        <label style="font-size:13px;color:#ccc;display:block;margin-bottom:10px">UI Sounds</label>
-        <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px;">
-          <div>
-            <div style="font-size:13px;color:#fff;font-weight:500;">Enable UI Sounds</div>
-            <div style="font-size:11px;color:#666;margin-top:2px;">Play a sound when applying flags or navigating</div>
-          </div>
-          <label style="position:relative;display:inline-block;width:40px;height:22px;cursor:pointer;">
-            <input type="checkbox" id="ui_soundsToggle" onchange="setSetting('ui_sounds', this.checked)" style="opacity:0;width:0;height:0;">
-            <span class="rpcSlider" style="position:absolute;top:0;left:0;right:0;bottom:0;background:#2a2a2a;border-radius:22px;transition:.3s;"></span>
-            <span class="rpcKnob" style="position:absolute;left:3px;top:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:.3s;"></span>
-          </label>
-        </div>
-      </div>
-
-      <div style="border-top:1px solid #1a1a1a;padding-top:16px;margin-bottom:20px;">
-        <label style="font-size:13px;color:#ccc;display:block;margin-bottom:10px">Notification Sound</label>
-        <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px;">
-          <div>
-            <div style="font-size:13px;color:#fff;font-weight:500;">Enable Notification Sound</div>
-            <div style="font-size:11px;color:#666;margin-top:2px;">Play a sound when tips appear at the top</div>
-          </div>
-          <label style="position:relative;display:inline-block;width:40px;height:22px;cursor:pointer;">
-            <input type="checkbox" id="notif_soundToggle" onchange="setSetting('notif_sound', this.checked)" style="opacity:0;width:0;height:0;">
-            <span class="rpcSlider" style="position:absolute;top:0;left:0;right:0;bottom:0;background:#2a2a2a;border-radius:22px;transition:.3s;"></span>
-            <span class="rpcKnob" style="position:absolute;left:3px;top:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:.3s;"></span>
-          </label>
-        </div>
-      </div>
-
-      <div style="border-top:1px solid #1a1a1a;padding-top:16px;margin-bottom:20px;">
-        <label style="font-size:13px;color:#ccc;display:block;margin-bottom:10px">Tips</label>
-        <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px;">
+      <div style="border-top:1px solid #1a1a1a;padding-top:20px;margin-bottom:28px;">
+        <label style="font-size:13px;color:#ccc;display:block;margin-bottom:10px">Tips & Notifications</label>
+        <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px;margin-bottom:10px;">
           <div>
             <div style="font-size:13px;color:#fff;font-weight:500;">Show Top Tips</div>
             <div style="font-size:11px;color:#666;margin-top:2px;">Show rotating tip notifications at the top of the screen</div>
@@ -6535,9 +6589,31 @@ body{font-family:'Inter',sans-serif;background:var(--bg-main, #0d0d0d);color:#e0
             <span class="rpcKnob" style="position:absolute;left:3px;top:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:.3s;"></span>
           </label>
         </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px;margin-bottom:10px;">
+          <div>
+            <div style="font-size:13px;color:#fff;font-weight:500;">Notification Sound</div>
+            <div style="font-size:11px;color:#666;margin-top:2px;">Play a sound when tips appear at the top</div>
+          </div>
+          <label style="position:relative;display:inline-block;width:40px;height:22px;cursor:pointer;">
+            <input type="checkbox" id="notif_soundToggle" onchange="setSetting('notif_sound', this.checked)" style="opacity:0;width:0;height:0;">
+            <span class="rpcSlider" style="position:absolute;top:0;left:0;right:0;bottom:0;background:#2a2a2a;border-radius:22px;transition:.3s;"></span>
+            <span class="rpcKnob" style="position:absolute;left:3px;top:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:.3s;"></span>
+          </label>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px;">
+          <div>
+            <div style="font-size:13px;color:#fff;font-weight:500;">UI Sounds</div>
+            <div style="font-size:11px;color:#666;margin-top:2px;">Play a sound when applying flags or navigating</div>
+          </div>
+          <label style="position:relative;display:inline-block;width:40px;height:22px;cursor:pointer;">
+            <input type="checkbox" id="ui_soundsToggle" onchange="setSetting('ui_sounds', this.checked)" style="opacity:0;width:0;height:0;">
+            <span class="rpcSlider" style="position:absolute;top:0;left:0;right:0;bottom:0;background:#2a2a2a;border-radius:22px;transition:.3s;"></span>
+            <span class="rpcKnob" style="position:absolute;left:3px;top:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:.3s;"></span>
+          </label>
+        </div>
       </div>
 
-      <div style="border-top:1px solid #1a1a1a;padding-top:16px;margin-bottom:20px;">
+      <div style="border-top:1px solid #1a1a1a;padding-top:20px;margin-bottom:28px;">
         <label style="font-size:13px;color:#ccc;display:block;margin-bottom:10px">Potato Mode</label>
         <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px;">
           <div>
@@ -6552,7 +6628,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg-main, #0d0d0d);color:#e0
         </div>
       </div>
 
-      <div style="border-top:1px solid #1a1a1a;padding-top:16px;margin-bottom:20px;">
+      <div style="border-top:1px solid #1a1a1a;padding-top:20px;margin-bottom:28px;">
         <label style="font-size:13px;color:#ccc;display:block;margin-bottom:10px">HWID Spoofer</label>
         <div style="background:var(--bg-card, #111);border:1px solid #1e1e1e;border-radius:6px;padding:12px 14px;">
           <div style="font-size:13px;color:#fff;font-weight:500;">Spoof Hardware ID</div>
@@ -7883,13 +7959,23 @@ function renderPresets() {
 var flagsData = [];
 var filterQuery = '';
 
-function showToast(msg, type) {
+function showToast(msg, type, details) {
   var container = document.getElementById('toast-container');
   var toast = document.createElement('div');
   var color = type === 'error' ? '#ef4444' : type === 'warn' ? '#f59e0b' : '#22c55e';
   var bellSvg = '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="' + color + '" style="width:14px;height:14px;flex-shrink:0;"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" /></svg>';
-  toast.style.cssText = 'display:flex;align-items:center;gap:8px;background:var(--bg-card, #111);border:1px solid ' + color + ';border-left:3px solid ' + color + ';border-radius:6px;padding:10px 14px;color:#fff;font-size:12px;box-shadow:0 4px 12px rgba(0,0,0,0.5);opacity:0;transition:opacity 0.25s ease,transform 0.25s ease;transform:translateX(16px);pointer-events:auto;min-width:200px;max-width:300px;';
-  toast.innerHTML = bellSvg + '<span>' + esc(msg) + '</span>';
+  toast.style.cssText = 'display:flex;flex-direction:column;gap:6px;background:var(--bg-card, #111);border:1px solid ' + color + ';border-left:3px solid ' + color + ';border-radius:6px;padding:10px 14px;color:#fff;font-size:12px;box-shadow:0 4px 12px rgba(0,0,0,0.5);opacity:0;transition:opacity 0.25s ease,transform 0.25s ease;transform:translateX(16px);pointer-events:auto;min-width:200px;max-width:380px;';
+  var html = '<div style="display:flex;align-items:center;gap:8px;">' + bellSvg + '<span style="flex:1;">' + esc(msg) + '</span>';
+  if (type === 'error') {
+    html += '<button onclick="copyErrorToast(this)" style="background:none;border:1px solid ' + color + ';color:' + color + ';padding:2px 6px;border-radius:3px;cursor:pointer;font-size:10px;white-space:nowrap;flex-shrink:0;">Copy</button>';
+  }
+  html += '</div>';
+  if (type === 'error' && details) {
+    html += '<div style="font-size:10px;color:#999;word-break:break-all;line-height:1.4;padding:4px 6px;background:rgba(0,0,0,0.3);border-radius:3px;max-height:80px;overflow-y:auto;">' + esc(details) + '</div>';
+  }
+  toast.innerHTML = html;
+  toast._errorMsg = msg;
+  toast._errorDetails = details || '';
   container.appendChild(toast);
   requestAnimationFrame(function() {
     toast.style.opacity = '1';
@@ -7899,10 +7985,33 @@ function showToast(msg, type) {
     toast.style.opacity = '0';
     toast.style.transform = 'translateX(16px)';
     setTimeout(function() { if (toast.parentNode) toast.remove(); }, 300);
-  }, 3200);
+  }, type === 'error' ? 8000 : 3200);
 }
 
-function logConsole(msg, type) {
+function copyErrorToast(btn) {
+  var toast = btn.closest('#toast-container > div') || btn.parentElement.parentElement;
+  var msg = toast._errorMsg || '';
+  var details = toast._errorDetails || '';
+  var text = 'Leitostrap Error Report\n';
+  text += 'Version: V6.6.0\n';
+  text += 'Time: ' + new Date().toISOString() + '\n';
+  text += 'Error: ' + msg + '\n';
+  if (details) text += 'Details: ' + details + '\n';
+  text += '---\nCopy this and send it on Discord for help.';
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function() {
+      showToast('Error report copied! Send it on Discord.', 'success');
+    });
+  } else {
+    var ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); showToast('Error report copied!', 'success'); } catch(e) {}
+    document.body.removeChild(ta);
+  }
+}
+
+function logConsole(msg, type, extra) {
   var out = document.getElementById('consoleOutput');
   if (!out) return;
   var time = new Date().toLocaleTimeString([], {hour12: "False"});
@@ -7910,7 +8019,11 @@ function logConsole(msg, type) {
   if (type === 'error') color = '#ef4444';
   else if (type === 'success') color = '#22c55e';
   else if (type === 'warn') color = '#f59e0b';
-  out.innerHTML += '<span style="color:#555">[' + time + ']</span> <span style="color:' + color + '">' + msg + '</span><br>';
+  var line = '<span style="color:#555">[' + time + ']</span> <span style="color:' + color + '">' + msg + '</span>';
+  if (extra && type === 'error') {
+    line += '<br><span style="color:#555;font-size:10px;padding-left:20px;display:block;word-break:break-all;">' + esc(extra) + '</span>';
+  }
+  out.innerHTML += line + '<br>';
   out.scrollTop = out.scrollHeight;
 }
 
@@ -8588,6 +8701,7 @@ function fetchRobloxVersion() {
   window.pywebview.api.FetchRobloxVersion().then(function(ver) {
     if (ver) document.getElementById('homeRobloxVersion').textContent = ver;
   }).catch(function(){});
+  loadRobloxExePath();
 }
 
 function updateStatus() {
@@ -8663,6 +8777,63 @@ function reloadOffsets() {
 
 function homeImport() {
   openImportOverlay();
+}
+
+function browseRobloxExe() {
+  if (!window.pywebview || !window.pywebview.api) return;
+  window.pywebview.api.BrowseRobloxExe().then(function(r) {
+    if (r && r.success && r.path) {
+      var el = document.getElementById('homeRobloxExePath');
+      if (el) { el.textContent = r.path; el.title = r.path; }
+    }
+  });
+}
+
+function loadRobloxExePath() {
+  if (!window.pywebview || !window.pywebview.api) return;
+  window.pywebview.api.GetRobloxExePath().then(function(r) {
+    var el = document.getElementById('homeRobloxExePath');
+    var el2 = document.getElementById('versionsExePath');
+    var path = (r && r.path) ? r.path : '';
+    var source = (r && r.source) ? r.source : 'none';
+    if (el) {
+      el.textContent = path || 'No path set';
+      el.title = path || '';
+    }
+    if (el2) {
+      if (source === 'custom') {
+        el2.textContent = path;
+        el2.title = path;
+        el2.style.color = '#22c55e';
+      } else if (source === 'auto') {
+        el2.textContent = path;
+        el2.title = path;
+        el2.style.color = '#666';
+      } else {
+        el2.textContent = 'Auto-detected';
+        el2.title = '';
+        el2.style.color = '#666';
+      }
+    }
+  });
+}
+
+function browseRobloxExeVersions() {
+  if (!window.pywebview || !window.pywebview.api) return;
+  window.pywebview.api.BrowseRobloxExe().then(function(r) {
+    if (r && r.success && r.path) {
+      loadRobloxExePath();
+      showToast('Roblox path set: ' + r.path.split('\\\\').pop(), 'success');
+    }
+  });
+}
+
+function resetRobloxExePath() {
+  if (!window.pywebview || !window.pywebview.api) return;
+  window.pywebview.api.SaveSetting('custom_roblox_path', '').then(function() {
+    loadRobloxExePath();
+    showToast('Roblox path reset to auto-detect', 'success');
+  });
 }
 
 function injectRoblox() {
@@ -8960,8 +9131,9 @@ function _doApply(method) {
     } else {
       document.getElementById('rbxDot').className = 'dot red';
       document.getElementById('rbxStatus').textContent = 'Error: ' + (res ? res.message : 'Unknown');
-      showToast((res ? res.message : 'Unknown error'), 'error');
-      logConsole('Failed to apply flags: ' + (res ? res.message : 'Unknown'), 'error');
+      var errDetail = (res && res.details) ? res.details : (res ? res.message : 'No response from backend');
+      showToast((res ? res.message : 'Unknown error'), 'error', errDetail);
+      logConsole('Failed to apply flags: ' + (res ? res.message : 'Unknown'), 'error', errDetail);
     }
     if (pending) {
       if (isProxyMethod) {
@@ -8990,10 +9162,11 @@ function unapplyFlags() {
       logConsole('All FFlags removed successfully.', 'success');
       playSound('success');
     } else {
-      showToast(res ? res.message : 'Failed to unapply', 'error');
-      logConsole('Unapply failed: ' + (res ? res.message : 'Unknown'), 'error');
+      var errDetail = (res && res.details) ? res.details : (res ? res.message : 'No response');
+      showToast(res ? res.message : 'Failed to unapply', 'error', errDetail);
+      logConsole('Unapply failed: ' + (res ? res.message : 'Unknown'), 'error', errDetail);
     }
-  }).catch(function(){ showToast('Unapply failed', 'error'); });
+  }).catch(function(e){ showToast('Unapply failed', 'error', e ? e.message || String(e) : 'Unknown error'); });
 }
 
 function exportJson() {
@@ -9161,8 +9334,9 @@ function submitImportJson() {
     btn.disabled = false;
     btn.style.opacity = '1';
     btn.textContent = 'Ok';
-    showToast('Import error: ' + err, 'error');
-    document.getElementById('importStatus').textContent = 'Error importing flags';
+    var errText = (err && err.message) ? err.message : String(err);
+    showToast('Import error: ' + errText, 'error', errText);
+    document.getElementById('importStatus').textContent = 'Error: ' + errText;
   });
 }
 
@@ -9217,31 +9391,65 @@ function renderProfileRow(p, container) {
   btn.onclick = function() {
     btn.textContent = '...';
     btn.disabled = true;
-    var flags = p.flags;
-    if (!flags || Object.keys(flags).length === 0) {
-      showToast('No flags found for ' + p.name, 'error');
+    function _doImportFlags(flagObj, profileName) {
+      var keys = Object.keys(flagObj);
+      if (_multiImportEnabled) {
+        var activeTab = document.querySelector('.fflag-tab.active');
+        if (!activeTab) { addFlagTab(); activeTab = document.querySelector('.fflag-tab.active'); }
+        if (activeTab) {
+          _currentTabName = activeTab._fileName || 'Combined';
+          if (!activeTab._fileData) activeTab._fileData = [];
+          flagsData = activeTab._fileData;
+          var existingNames = {};
+          for (var xi = 0; xi < flagsData.length; xi++) { existingNames[(flagsData[xi].name || '').toLowerCase()] = xi; }
+          var added = 0, updated = 0;
+          for (var i = 0; i < keys.length; i++) {
+            var k = keys[i].toLowerCase();
+            if (existingNames.hasOwnProperty(k)) { flagsData[existingNames[k]].value = String(flagObj[keys[i]]); updated++; }
+            else { flagsData.push({ name: keys[i], value: String(flagObj[keys[i]]), type: itype(flagObj[keys[i]]) }); added++; }
+          }
+          renderFlags();
+          switchSection(1);
+          showToast('+' + added + ' added, ' + updated + ' updated from ' + profileName);
+        }
+      } else {
+        addFlagTab();
+        var activeTab = document.querySelector('.fflag-tab.active');
+        if (activeTab) {
+          var span = activeTab.querySelector('.fflag-tab-name');
+          if (span) { span.textContent = profileName; activeTab._fileName = profileName; }
+          _currentTabName = profileName;
+          activeTab._fileData = [];
+          flagsData = activeTab._fileData;
+          for (var i = 0; i < keys.length; i++) {
+            flagsData.push({ name: keys[i], value: String(flagObj[keys[i]]), type: itype(flagObj[keys[i]]) });
+          }
+          renderFlags();
+        }
+        switchSection(1);
+        showToast('Imported ' + keys.length + ' flags from ' + profileName);
+      }
       btn.textContent = '+';
       btn.disabled = false;
-      return;
     }
-    addFlagTab();
-    var activeTab = document.querySelector('.fflag-tab.active');
-    if (activeTab) {
-      var span = activeTab.querySelector('.fflag-tab-name');
-      if (span) { span.textContent = p.name; activeTab._fileName = p.name; }
-      _currentTabName = p.name;
-      activeTab._fileData = [];
-      flagsData = activeTab._fileData;
-      var keys = Object.keys(flags);
-      for (var i = 0; i < keys.length; i++) {
-        flagsData.push({ name: keys[i], value: String(flags[keys[i]]), type: itype(flags[keys[i]]) });
-      }
-      renderFlags();
+    if (p.flags && Object.keys(p.flags).length > 0) {
+      _doImportFlags(p.flags, p.name);
+    } else {
+      window.pywebview.api.GetProfileFlags(p.name).then(function(flags) {
+        if (!flags || Object.keys(flags).length === 0) {
+          showToast('No flags found for ' + p.name, 'error');
+          btn.textContent = '+';
+          btn.disabled = false;
+          return;
+        }
+        _doImportFlags(flags, p.name);
+      }).catch(function(err) {
+        var errText = (err && err.message) ? err.message : String(err);
+        showToast('Failed to load flags for ' + p.name + ': ' + errText, 'error', errText);
+        btn.textContent = '+';
+        btn.disabled = false;
+      });
     }
-    switchSection(1);
-    showToast('Imported ' + keys.length + ' flags from ' + p.name);
-    btn.textContent = '+';
-    btn.disabled = false;
   };
   row.appendChild(btn);
   container.appendChild(row);
@@ -9433,6 +9641,22 @@ function setReapplyMs(val) {
   SECTIONS_DATA['reapply_ms'] = ms;
   window.pywebview.api.SaveSetting('reapply_ms', String(ms)).catch(function(){});
   logConsole('Re-apply interval set to ' + ms + 'ms');
+}
+
+var _multiImportEnabled = false;
+function toggleMultiImport(enabled) {
+  _multiImportEnabled = enabled;
+  var knob = document.querySelector('#multiImportToggle').parentElement.querySelector('.rpcKnob');
+  var slider = document.querySelector('#multiImportToggle').parentElement.querySelector('.rpcSlider');
+  if (enabled) {
+    if (knob) { knob.style.left = '21px'; knob.style.background = '#1a1a1a'; }
+    if (slider) { slider.style.background = '#fff'; }
+  } else {
+    if (knob) { knob.style.left = '3px'; knob.style.background = '#fff'; }
+    if (slider) { slider.style.background = '#2a2a2a'; }
+  }
+  window.pywebview.api.SaveSetting('multi_import', enabled).catch(function(){});
+  logConsole('Multi-Import Mode: ' + (enabled ? 'ON' : 'OFF'));
 }
 
 function setPotatoMode(enabled) {
@@ -10051,6 +10275,12 @@ function init() {
         }
       }).catch(function(){});
     });
+    window.pywebview.api.GetSetting('multi_import').then(function(v) {
+      _multiImportEnabled = (v === true || v === 'true');
+      var toggle = document.getElementById('multiImportToggle');
+      if (toggle) toggle.checked = _multiImportEnabled;
+      toggleMultiImport(_multiImportEnabled);
+    }).catch(function(){});
     window.pywebview.api.GetSetting('potato_mode').then(function(v) {
       var enabled = (v === true || v === 'true');
       _applyToggleUI('potato_mode', enabled);
