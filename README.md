@@ -1,10 +1,10 @@
 <div align="center">
   <img src="Leitostrap.png" alt="Leitostrap Logo" width="120">
   <h1>Leitostrap Injector</h1>
-  <p><i>A lightweight Roblox FastFlags manager with live memory injection and full customization.</i></p>
+  <p><i>A lightweight Roblox FastFlags manager with live memory injection and full customization. And totally Open-Source</i></p>
 
   <a href="https://leitostrap.netlify.app/">Website</a> · 
-  <a href="https://github.com/Leitostrap/Leitostrap/releases/latest">Latest Release</a> · 
+  <a href="https://github.com/Leitostrap/Leitostrap-Injector/releases/latest">Latest Release</a> · 
   <a href="https://discord.gg/Fgec4NtHnu">Discord</a> · 
   <a href="https://github.com/Leitostrap/Leitostrap">Source Code</a>
 
