@@ -1,11 +1,11 @@
 <div align="center">
   <img src="Leitostrap.png" alt="Leitostrap Logo" width="120">
   <h1>Leitostrap Injector</h1>
-  <p><i>A lightweight Roblox FastFlags manager with live memory injection and full customization.</i></p>
+  <p><i>A lightweight Roblox FastFlags manager with full customization.</i></p>
 
-  <a href="https://leitostrap.netlify.app/">Website</a> · 
-  <a href="https://github.com/Leitostrap/Leitostrap/releases/latest">Latest Release</a> · 
-  <a href="https://discord.gg/Fgec4NtHnu">Discord</a> · 
+  <a href="https://leitostrap.netlify.app/">Website</a> ·
+  <a href="https://github.com/Leitostrap/Leitostrap/releases/latest">Latest Release</a> ·
+  <a href="https://discord.gg/Fgec4NtHnu">Discord</a> ·
   <a href="https://github.com/Leitostrap/Leitostrap">Source Code</a>
 
   <br><br>
@@ -27,64 +27,58 @@
 
 ## Features
 
-### Injection Engine
-- **Dual Injection Methods** — Offsetless (FNV-1a hashmap scan, faster) and Offsets (Theo's database fallback)
-- **Safe Memory Write** — Uses NtWriteVirtualMemory via ntdll.dll. No VirtualProtectEx, no NtFlushInstructionCache (avoids Hyperion/Byfron detection)
-- **Auto Apply** — Automatically injects FFlags when Roblox is detected. Toggle ON/OFF from Settings
-- **Re-apply** — Configurable interval (ms) to re-inject flags. Shows toast notification on each re-apply. Works independently or with Auto Apply
-- **Roblox Clients** — Live monitoring of all Roblox instances. Shows avatar, username, PID, game, uptime. Kill and inject per instance
-- **13 Singleton Patterns** — Multiple displacement offsets for stable pointer resolution
-- **Live Offsets** — Auto-downloads fresh offsets from offsets.imtheo.lol. No disk cache, always up-to-date
-- **HWID Spoofer** — Built-in hardware ID spoofer in Settings
-
 ### FFlag Editor
-- Add, edit, delete individual flags. Search/filter by name or value
-- Bulk delete selected or all flags with dedicated icons
+
+- Add, edit, and delete individual flags
+- Search and filter flags by name or value
+- Bulk delete selected or all flags
 - JSON import/export for sharing configurations
-- Editable tabs (F1, F2, F3...) with persistent counter
-- Preset presets for common optimizations
-- Disk-persisted Explorer (Library, FFlags, Auto Apply folders in AppData)
+- Editable tabs (F1, F2, F3...) with persistent counters
+- Presets for common optimizations
+- Disk-persisted Explorer with Library, FFlags, and Auto Apply folders in AppData
 
 ### Themes Engine
+
 - **60 Static Themes** — Pure black/white color schemes with unique accent colors
-- **35 Animated Themes** — Each with its own unique canvas animation (Matrix Rain, Aurora, Lava, Nebula, Snowfall, Vortex, Fireflies, Glitch, and more)
-- **Custom Background** — Upload any PNG, JPG, or GIF as background (stored as Base64)
-- **Low-End Optimized** — All animations wrapped in try-catch, no shadowBlur, reduced particles. Works on Intel HD3000
+- **35 Animated Themes** — Matrix Rain, Aurora, Lava, Nebula, Snowfall, Vortex, Fireflies, Glitch, and more
+- **Custom Backgrounds** — Upload PNG, JPG, or GIF backgrounds
+- **Low-End Optimized** — Lightweight animations designed to reduce unnecessary resource usage
 
 ### Extras
-- **Discord Rich Presence** — Live section tracking, active flag count, Discord & GitHub links
-- **Hide UI / Overlay Mode** — Configurable hotkey (default: Insert) to hide/show window
-- **UI Sounds** — Click and success audio feedback (toggleable)
-- **Tazstrap Support** — Detects and launches Tazstrap alongside Bloxstrap, Fishstrap, Froststrap, Voidstrap
-- **Default Profiles** — 29 pre-built profiles across 5 categories with category logos
-- **Versions Manager** — Detects all installed launchers with logos. Launch/Install buttons
-- **Console** — Full activity log with injection events, errors, and status updates
+
+- **Discord Rich Presence** — Displays application activity and active flag information
+- **Hide UI / Overlay Mode** — Configurable hotkey for hiding and showing the interface
+- **UI Sounds** — Optional click and success audio feedback
+- **Tazstrap Support** — Support for Tazstrap and other compatible Roblox launchers
+- **Default Profiles** — Pre-built profiles across multiple categories
+- **Versions Manager** — Detects supported installed launchers
+- **Console** — Activity log for application events, errors, and status information
 
 ---
 
-## Why False Positives?
+## Security & Antivirus Warnings
 
-Leitostrap uses Windows Native API (`ntdll.dll`) to read and write process memory. These are the same APIs used by legitimate tools like Cheat Engine, x64dbg, and Process Hacker.
+Leitostrap interacts with Windows system APIs and may be flagged by security software because some of its components can resemble behavior commonly associated with debugging or system-level utilities.
 
-**Why it gets flagged:**
-1. **Memory manipulation APIs** — `NtReadVirtualMemory` and `NtWriteVirtualMemory` are also used by malware
-2. **PyInstaller single-file packing** — Packed executables trigger antivirus heuristics
-3. **No code signing** — Unsigned executables are treated as suspicious by SmartScreen
+Detection by antivirus software does not by itself establish whether a file is malicious.
 
-**There is NO malware, NO backdoor, NO data collection.** This is a 100% false positive common to all memory-editing software.
+For your security:
 
-**Fix:** Add `Leitostrap.exe` to your antivirus exclusions.
+- Download releases only from the project's official GitHub repository.
+- Review the source code before running unfamiliar builds.
+- Keep Windows and your security software up to date.
+- Do not disable security protections solely to run the application.
+- If a release is flagged, investigate the detection and verify the release source before proceeding.
 
 ---
 
 ## How to Use
 
-1. Download the latest release from [Releases](https://github.com/Leitostrap/Leitostrap/releases/latest)
-2. Add `Leitostrap.exe` to your antivirus exclusions
-3. Run `Leitostrap.exe`
-4. Configure your FFlags in the editor
-5. Open Roblox and wait for the green status dot
-6. Click **Apply FastFlags** to inject
+1. Download the latest release from the [Releases](https://github.com/Leitostrap/Leitostrap/releases/latest) page.
+2. Launch the application.
+3. Configure your FastFlags using the editor.
+4. Review your configuration before applying it.
+5. Use the application's available controls to manage your configuration.
 
 ---
 
@@ -98,6 +92,7 @@ Leitostrap uses Windows Native API (`ntdll.dll`) to read and write process memor
 | **Developer** | Winnie |
 
 ### Special Thanks
+
 - **Leo** (Velostrap)
 - **S1lent** (Nebulastrap)
 - **Theo** (Offsets)
