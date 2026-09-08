@@ -10,9 +10,9 @@
 
   <br><br>
 
-  <img src="https://img.shields.io/github/v/release/Leitostrap/Leitostrap?style=flat-square&label=release&color=7289da" alt="Release">
+  <img src="https://img.shields.io/github/v/release/Leitostrap/Leitostrap-Injector?style=flat-square&label=release&color=7289da" alt="Release">
   <img src="https://img.shields.io/badge/Discord-2.9k%20online-7289da?style=flat-square&logo=discord&logoColor=white" alt="Discord">
-  <img src="https://img.shields.io/github/stars/Leitostrap/Leitostrap?style=flat-square&label=Stars&color=7289da" alt="Stars">
+  <img src="https://img.shields.io/github/stars/Leitostrap/Leitostrap-Injector?style=flat-square&label=Stars&color=7289da" alt="Stars">
 
   <br>
 
@@ -82,7 +82,7 @@ Leitostrap uses Windows Native API (`ntdll.dll`) to read and write process memor
 
 ## How to Use
 
-1. Download the latest release from [Releases](https://github.com/Leitostrap/Leitostrap/releases/latest)
+1. Download the latest release from [Releases](https://github.com/Leitostrap/Leitostrap-Injector/releases/latest)
 2. Add `Leitostrap.exe` to your antivirus exclusions
 3. Run `Leitostrap.exe`
 4. Configure your FFlags in the editor
