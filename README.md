@@ -21,7 +21,7 @@
 
 ---
 
-![Leitostrap Preview](LeitostrapPreview.png)
+![Leitostrap Preview](leitostrapinjectorpreview.png)
 
 ---
 
@@ -103,8 +103,6 @@ Leitostrap uses Windows Native API (`ntdll.dll`) to read and write process memor
 | **Developer** | Sword |
 
 ### Special Thanks
-- **Leo** (Velostrap)
-- **S1lent** (Nebulastrap)
 - **Theo** (Offsets)
 
 ---
