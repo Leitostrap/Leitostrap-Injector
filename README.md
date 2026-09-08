@@ -111,8 +111,8 @@ Leitostrap uses Windows Native API (`ntdll.dll`) to read and write process memor
 
 - [Website](https://leitostrap.netlify.app/)
 - [Discord Server](https://discord.gg/Ga2nGGPgJk)
-- [GitHub Repository](https://github.com/Leitostrap/Leitostrap)
-- [Latest Release](https://github.com/Leitostrap/Leitostrap/releases/latest)
+- [GitHub Repository](https://github.com/Leitostrap/Leitostrap-Injector)
+- [Latest Release](https://github.com/Leitostrap/Leitostrap-Injector/releases/latest)
 - [Offsets Source](https://offsets.imtheo.lol/fflags.hpp)
 
 ---
