@@ -1,12 +1,12 @@
 <div align="center">
   <img src="Leitostrap.png" alt="Leitostrap Logo" width="120">
   <h1>Leitostrap Injector</h1>
-  <p><i>A lightweight Roblox FastFlags manager with live memory injection and full customization. And totally Open-Source</i></p>
+  <p><i>The most advanced Roblox FastFlags injector — built in C# with live memory injection, 95+ themes, and full customization. Open-Source.</i></p>
 
   <a href="https://leitostrap.netlify.app/">Website</a> · 
   <a href="https://github.com/Leitostrap/Leitostrap-Injector/releases/latest">Latest Release</a> · 
-  <a href="https://discord.gg/Fgec4NtHnu">Discord</a> · 
-  <a href="https://github.com/Leitostrap/Leitostrap">Source Code</a>
+  <a href="https://discord.gg/Ga2nGGPgJk">Discord</a> · 
+  <a href="https://github.com/Leitostrap/Leitostrap-Injector">Source Code</a>
 
   <br><br>
 
@@ -28,37 +28,41 @@
 ## Features
 
 ### Injection Engine
-- **Dual Injection Methods** — Offsetless (FNV-1a hashmap scan, faster) and Offsets (Theo's database fallback)
+- **4 Injection Methods** — Combined Cache+Memory, Cache Method, Memory Offsets (Theo's database), and Memory Offsetless (pattern scan)
 - **Safe Memory Write** — Uses NtWriteVirtualMemory via ntdll.dll. No VirtualProtectEx, no NtFlushInstructionCache (avoids Hyperion/Byfron detection)
 - **Auto Apply** — Automatically injects FFlags when Roblox is detected. Toggle ON/OFF from Settings
-- **Re-apply** — Configurable interval (ms) to re-inject flags. Shows toast notification on each re-apply. Works independently or with Auto Apply
+- **Smart Mode** — Intelligent auto-injection that detects the right moment to inject flags
+- **Re-apply** — Configurable interval (ms) to re-inject flags. Shows toast notification on each re-apply
 - **Roblox Clients** — Live monitoring of all Roblox instances. Shows avatar, username, PID, game, uptime. Kill and inject per instance
-- **13 Singleton Patterns** — Multiple displacement offsets for stable pointer resolution
-- **Live Offsets** — Auto-downloads fresh offsets from offsets.imtheo.lol. No disk cache, always up-to-date
+- **Cache Method** — Modifies Roblox client settings via proxy/cache files
+- **Memory Offsets** — Uses offset database for direct memory writes
+- **Memory Offsetless** — FNV-1a hashmap scan, no offset database needed
+- **Live Offsets** — Auto-downloads fresh offsets from offsets.imtheo.lol. Always up-to-date
 - **HWID Spoofer** — Built-in hardware ID spoofer in Settings
 
 ### FFlag Editor
-- Add, edit, delete individual flags. Search/filter by name or value
+- Full editor with tabs (F1, F2, F3...), search/filter, import/export
 - Bulk delete selected or all flags with dedicated icons
 - JSON import/export for sharing configurations
-- Editable tabs (F1, F2, F3...) with persistent counter
-- Preset presets for common optimizations
+- Offsets database browser and profile manager
 - Disk-persisted Explorer (Library, FFlags, Auto Apply folders in AppData)
+- Community FFlags — Pre-built community flag configurations
 
 ### Themes Engine
 - **60 Static Themes** — Pure black/white color schemes with unique accent colors
 - **35 Animated Themes** — Each with its own unique canvas animation (Matrix Rain, Aurora, Lava, Nebula, Snowfall, Vortex, Fireflies, Glitch, and more)
 - **Custom Background** — Upload any PNG, JPG, or GIF as background (stored as Base64)
-- **Low-End Optimized** — All animations wrapped in try-catch, no shadowBlur, reduced particles. Works on Intel HD3000
+- **Full Propagation** — Theme applies across all UI elements
 
-### Extras
+### Extras & Tools
 - **Discord Rich Presence** — Live section tracking, active flag count, Discord & GitHub links
 - **Hide UI / Overlay Mode** — Configurable hotkey (default: Insert) to hide/show window
 - **UI Sounds** — Click and success audio feedback (toggleable)
-- **Tazstrap Support** — Detects and launches Tazstrap alongside Bloxstrap, Fishstrap, Froststrap, Voidstrap
-- **Default Profiles** — 29 pre-built profiles across 5 categories with category logos
+- **20 Languages** — Full localization for English, Spanish, French, German, Portuguese, Italian, Japanese, Korean, Arabic, Russian, Turkish, Polish, Dutch, Swedish, Thai, Indonesian, Ukrainian, Vietnamese, Chinese (Simplified & Traditional)
+- **Default Profiles** — Pre-built profiles across multiple categories
 - **Versions Manager** — Detects all installed launchers with logos. Launch/Install buttons
 - **Console** — Full activity log with injection events, errors, and status updates
+- **Proxy Support** — Built-in proxy with certificate management
 
 ---
 
@@ -68,8 +72,7 @@ Leitostrap uses Windows Native API (`ntdll.dll`) to read and write process memor
 
 **Why it gets flagged:**
 1. **Memory manipulation APIs** — `NtReadVirtualMemory` and `NtWriteVirtualMemory` are also used by malware
-2. **PyInstaller single-file packing** — Packed executables trigger antivirus heuristics
-3. **No code signing** — Unsigned executables are treated as suspicious by SmartScreen
+2. **Unsigned executable** — Without code signing, SmartScreen and antivirus heuristics may flag it
 
 **There is NO malware, NO backdoor, NO data collection.** This is a 100% false positive common to all memory-editing software.
 
@@ -92,10 +95,12 @@ Leitostrap uses Windows Native API (`ntdll.dll`) to read and write process memor
 
 | Role | Name |
 |------|------|
-| **Owner** | Leito |
-| **Developer** | Caiox |
-| **Developer** | Prezone |
+| **Developer** | Lean |
 | **Developer** | Winnie |
+| **Developer** | Prezone |
+| **Developer** | Pepper |
+| **Developer** | Dem |
+| **Developer** | Sword |
 
 ### Special Thanks
 - **Leo** (Velostrap)
@@ -107,7 +112,7 @@ Leitostrap uses Windows Native API (`ntdll.dll`) to read and write process memor
 ## Links
 
 - [Website](https://leitostrap.netlify.app/)
-- [Discord Server](https://discord.gg/Fgec4NtHnu)
+- [Discord Server](https://discord.gg/Ga2nGGPgJk)
 - [GitHub Repository](https://github.com/Leitostrap/Leitostrap)
 - [Latest Release](https://github.com/Leitostrap/Leitostrap/releases/latest)
 - [Offsets Source](https://offsets.imtheo.lol/fflags.hpp)
