@@ -1,0 +1,209 @@
+<Window x:Class="LeitostrapV7.Installer.InstallerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        Title="Leitostrap Installer" Width="760" Height="580"
+        WindowStartupLocation="CenterScreen" WindowStyle="None"
+        AllowsTransparency="True" Background="Transparent"
+        ResizeMode="NoResize" Topmost="True">
+    <Window.Resources>
+        <SolidColorBrush x:Key="Bg" Color="#0A0A0A"/>
+        <SolidColorBrush x:Key="Card" Color="#111111"/>
+        <SolidColorBrush x:Key="Border" Color="#1A1A1A"/>
+        <SolidColorBrush x:Key="DimText" Color="#666666"/>
+        <SolidColorBrush x:Key="White" Color="#FFFFFF"/>
+        <Style x:Key="ModernBtn" TargetType="Button" BasedOn="{StaticResource ModernBtn}"/>
+        <Style x:Key="GreenBtn" TargetType="Button" BasedOn="{StaticResource ModernGreenBtn}"/>
+    </Window.Resources>
+
+
+    <Border Background="{StaticResource Bg}" BorderBrush="{StaticResource Border}"
+            BorderThickness="1" CornerRadius="10" ClipToBounds="True">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="40"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+
+            <Border Grid.Row="0" Background="#080808" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <Grid>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0">
+                        <ui:SymbolIcon Symbol="ArrowDownload20" FontSize="12" Foreground="#FFFFFF" Margin="0,0,6,0"/>
+                        <TextBlock Text="Leitostrap Installer" FontSize="11" Foreground="#888888" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <Button HorizontalAlignment="Right" Background="Transparent" BorderThickness="0"
+                            Click="CloseBtn_Click" Width="30" Height="30" Margin="0,0,4,0"
+                            Cursor="Hand">
+                        <ui:SymbolIcon Symbol="Dismiss20" FontSize="10" Foreground="#666666"/>
+                    </Button>
+                </Grid>
+            </Border>
+
+
+            <Grid Grid.Row="1">
+                <Grid x:Name="PageWelcome" Visibility="Visible" Margin="30,20">
+                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                        <Border Width="80" Height="80" CornerRadius="40"
+                                Background="{StaticResource Card}" BorderBrush="{StaticResource Border}"
+                                BorderThickness="1" HorizontalAlignment="Center" Margin="0,0,0,16">
+                            <Border CornerRadius="38" ClipToBounds="True" HorizontalAlignment="Center"
+                                    VerticalAlignment="Center" Width="76" Height="76">
+                                <Image Source="/LeitostrapV7;component/Leitostrap.png"
+                                       Width="76" Height="76" Stretch="UniformToFill"/>
+                            </Border>
+                        </Border>
+                        <TextBlock Text="Welcome to Leitostrap" FontSize="20" FontWeight="SemiBold"
+                                   Foreground="{StaticResource White}" HorizontalAlignment="Center" Margin="0,0,0,6"/>
+                        <TextBlock Text="V7.0.0 - Roblox FFlag Injector" FontSize="12"
+                                   Foreground="{StaticResource DimText}" HorizontalAlignment="Center" Margin="0,0,0,4"/>
+                        <TextBlock Text="This wizard will guide you through the installation process."
+                                   FontSize="11" Foreground="{StaticResource DimText}" HorizontalAlignment="Center"
+                                   TextAlignment="Center" MaxWidth="360" Margin="0,0,0,24"/>
+                        <Button x:Name="WelcomeContinueBtn" Style="{StaticResource GreenBtn}"
+                                Click="WelcomeContinue_Click" Width="200" Height="36"
+                                HorizontalAlignment="Center">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="Continue" FontSize="12" FontWeight="SemiBold" Foreground="White"/>
+                                <ui:SymbolIcon Symbol="ArrowRight20" FontSize="11" Foreground="White" Margin="6,0,0,0"/>
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+
+
+                <Grid x:Name="PageLanguage" Visibility="Collapsed" Margin="30,20">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Margin="0,0,0,16">
+                        <TextBlock Text="Select Language" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource White}"/>
+                        <TextBlock Text="Choose your preferred language for the installer." FontSize="11"
+                                   Foreground="{StaticResource DimText}" Margin="0,4,0,0"/>
+                    </StackPanel>
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <ItemsControl x:Name="LanguageList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border x:Name="LangBorder" Background="{StaticResource Card}"
+                                            BorderBrush="{StaticResource Border}" BorderThickness="1"
+                                            CornerRadius="8" Padding="14,10" Margin="0,0,0,4" Cursor="Hand"
+                                            MouseLeftButtonDown="LangItem_Click" Tag="{Binding}">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{Binding Flag}" FontSize="16"
+                                                       VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding Name}" FontSize="12"
+                                                       Foreground="{StaticResource White}" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="2" Text="{Binding Native}" FontSize="11"
+                                                       Foreground="{StaticResource DimText}" VerticalAlignment="Center"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+                        <Button Content="Back" Click="BackBtn_Click" Style="{StaticResource ModernBtn}" Margin="0,0,8,0"/>
+                        <Button x:Name="LangNextBtn" Content="Next" Click="LangNext_Click"
+                                Style="{StaticResource GreenBtn}" Width="100"/>
+                    </StackPanel>
+                </Grid>
+
+
+                <Grid x:Name="PagePath" Visibility="Collapsed" Margin="30,20">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="Installation Path" FontSize="16" FontWeight="SemiBold"
+                               Foreground="{StaticResource White}"/>
+                    <TextBlock Grid.Row="1" Text="Choose where to install Leitostrap." FontSize="11"
+                               Foreground="{StaticResource DimText}" Margin="0,4,0,16"/>
+                    <Border Grid.Row="2" Background="{StaticResource Card}" BorderBrush="{StaticResource Border}"
+                            BorderThickness="1" CornerRadius="8" Padding="4" Margin="0,0,0,12">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock x:Name="InstallPathText" Grid.Column="0"
+                                       Text="C:\Program Files\Leitostrap"
+                                       FontSize="12" Foreground="{StaticResource White}"
+                                       VerticalAlignment="Center" Margin="10,8,10,8"
+                                       TextTrimming="CharacterEllipsis"/>
+                            <Button Grid.Column="1" Content="Browse" Click="BrowsePath_Click"
+                                    Style="{StaticResource ModernBtn}" Width="80"/>
+                        </Grid>
+                    </Border>
+                    <Border Grid.Row="3" Background="{StaticResource Card}" BorderBrush="{StaticResource Border}"
+                            BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,4,0,0">
+                        <StackPanel>
+                            <CheckBox x:Name="CreateShortcutsChk" IsChecked="True" Margin="0,0,0,8"
+                                      Foreground="{StaticResource White}" Content="Create desktop shortcut"/>
+                            <CheckBox x:Name="RunAsAdminChk" IsChecked="True" Margin="0,0,0,8"
+                                      Foreground="{StaticResource White}" Content="Run as administrator (recommended)"/>
+                            <CheckBox x:Name="ExcludeAvChk" IsChecked="False"
+                                      Foreground="{StaticResource White}" Content="Exclude from Windows Defender"/>
+                        </StackPanel>
+                    </Border>
+                    <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+                        <Button Content="Back" Click="BackBtn_Click" Style="{StaticResource ModernBtn}" Margin="0,0,8,0"/>
+                        <Button Content="Install" Click="Install_Click" Style="{StaticResource GreenBtn}" Width="100"/>
+                    </StackPanel>
+                </Grid>
+
+
+                <Grid x:Name="PageInstalling" Visibility="Collapsed" Margin="30,20">
+                    <StackPanel VerticalAlignment="Center">
+                        <ui:SymbolIcon Symbol="ArrowDownload20" FontSize="32" Foreground="#FFFFFF"
+                                   HorizontalAlignment="Center" Margin="0,0,0,16"/>
+                        <TextBlock Text="Installing..." FontSize="16" FontWeight="SemiBold"
+                                   Foreground="{StaticResource White}" HorizontalAlignment="Center"/>
+                        <TextBlock x:Name="InstallStatusText" Text="Preparing files..."
+                                   FontSize="11" Foreground="{StaticResource DimText}"
+                                   HorizontalAlignment="Center" Margin="0,6,0,16"/>
+                        <Border Background="#1A1A1A" CornerRadius="4" Height="4" Margin="30,0,30,0">
+                            <Border x:Name="InstallProgress" Background="#FFFFFF" CornerRadius="4"
+                                    HorizontalAlignment="Left" Width="0"/>
+                        </Border>
+                    </StackPanel>
+                </Grid>
+
+
+                <Grid x:Name="PageDone" Visibility="Collapsed" Margin="30,20">
+                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                        <Border Width="64" Height="64" CornerRadius="32" Background="#1A1A1A"
+                                HorizontalAlignment="Center" Margin="0,0,0,16">
+                            <ui:SymbolIcon Symbol="Checkmark20" FontSize="28" Foreground="#FFFFFF"/>
+                        </Border>
+                        <TextBlock Text="Installation Complete" FontSize="18" FontWeight="SemiBold"
+                                   Foreground="{StaticResource White}" HorizontalAlignment="Center" Margin="0,0,0,6"/>
+                        <TextBlock Text="Leitostrap has been installed successfully." FontSize="11"
+                                   Foreground="{StaticResource DimText}" HorizontalAlignment="Center" Margin="0,0,0,24"/>
+                        <Button x:Name="LaunchBtn" Click="LaunchBtn_Click" Style="{StaticResource GreenBtn}"
+                                Width="200" Height="36" HorizontalAlignment="Center">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="Launch Leitostrap" FontSize="12" FontWeight="SemiBold" Foreground="White"/>
+                                <ui:SymbolIcon Symbol="Play20" FontSize="11" Foreground="White" Margin="6,0,0,0"/>
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Grid>
+
+
+            <Border Grid.Row="2" Background="#080808" Height="1"/>
+        </Grid>
+    </Border>
+</Window>
