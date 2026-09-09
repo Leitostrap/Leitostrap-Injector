@@ -1,0 +1,23 @@
+{
+  "DFFlagTextureQualityOverrideEnabled": "True",
+  "DFIntCanHideGuiGroupId": "32380007",
+  "DFIntMaxFrameBufferSize": "5",
+  "DFIntPerformanceControlTextureQualityBestUtility": "-1",
+  "DFIntTaskSchedulerTargetFps": "260",
+  "DFIntTextureQualityOverride": "1",
+  "FFlagDebugGraphicsPreferD3D11": "True",
+  "FFlagDebugGraphicsPreferD3D11FL10": "True",
+  "FFlagDebugSkyGray": "True",
+  "FFlagDisablePostFx": "True",
+  "FFlagHandleAltEnterFullscreenManually": "False",
+  "FFlagLuaAppUseUIBloxColorPalettes1": "True",
+  "FFlagTaskSchedulerLimitTargetFpsTo2402": "False",
+  "FFlagUIBloxUseNewThemeColorPalettes": "True",
+  "FIntDebugForceMSAASamples": "1",
+  "FIntDebugTextureManagerSkipMips": "2",
+  "FIntFontSizePadding": "3",
+  "FIntFullscreenTitleBarTriggerDelayMillis": "3600000",
+  "FIntRenderShadowIntensity": "0",
+  "FIntTerrainArraySliceSize": "0",
+  "FLogNetwork": "7"
+}
