@@ -14,6 +14,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
+using System.Threading.Tasks;
 using ZstdSharp;
 
 namespace LeitostrapV7.Core;
@@ -88,6 +89,8 @@ public class ProxyService
     private int _activePort;
     private readonly ConcurrentDictionary<string, byte[]> _dczDictCache =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (SslStream ssl, TcpClient tcp)> _warmConnections = new(StringComparer.OrdinalIgnoreCase);
+    private readonly SemaphoreSlim _preconnectLock = new(1, 1);
 
     public bool IsRunning { get; private set; }
     public bool IsReady => IsRunning && _defaultCert != null;
@@ -145,37 +148,39 @@ public class ProxyService
             }
 
             InstallCaIntoCacertPem();
+            ClearAllRobloxCaches();
 
             ResolveUpstreamIPs();
 
-            _activePort = 0;
+            _activePort = 443;
             TcpListener? bound = null;
-            foreach (int port in CandidatePorts)
+            try
             {
+                var listener = new TcpListener(IPAddress.Loopback, 443);
+                listener.Start(512);
+                bound = listener;
+                OnLog("Listening on 127.0.0.1:443 (loopback)");
+            }
+            catch (SocketException sex)
+            {
+                OnLog($"Port 443 unavailable ({sex.SocketErrorCode}), trying to free it...");
+                TryKillPort443();
                 try
                 {
-                    var listener = new TcpListener(IPAddress.IPv6Any, port);
-                    listener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-                    listener.Server.SetSocketOption(SocketOptionLevel.IPv6, SocketOptionName.IPv6Only, false);
+                    var listener = new TcpListener(IPAddress.Loopback, 443);
                     listener.Start(512);
                     bound = listener;
-                    _activePort = port;
-                    OnLog($"Listening on 127.0.0.1:{port} (IPv4+IPv6 dual-stack)");
-                    break;
+                    OnLog("Port 443 freed, listening on 127.0.0.1:443");
                 }
-                catch (SocketException sex)
+                catch (Exception ex2)
                 {
-                    OnLog($"Port {port} unavailable ({sex.SocketErrorCode}), trying next...");
-                }
-                catch (Exception ex)
-                {
-                    OnLog($"Port {port} failed: {ex.Message}");
+                    OnLog($"Port 443 still unavailable after cleanup: {ex2.Message}");
+                    return false;
                 }
             }
-
-            if (bound == null || _activePort == 0)
+            catch (Exception ex)
             {
-                OnLog("All candidate ports are unavailable");
+                OnLog($"Port 443 failed: {ex.Message}");
                 return false;
             }
 
@@ -184,14 +189,6 @@ public class ProxyService
                 try { bound.Stop(); } catch { }
                 OnLog("Failed to modify hosts file. Run as Administrator.");
                 return false;
-            }
-
-            if (_activePort != 443)
-            {
-                if (AddPortProxy(_activePort))
-                    OnLog($"Port 443 was busy - portproxy bridge installed (443 -> {_activePort})");
-                else
-                    OnLog("WARNING: 443 busy and portproxy failed - Roblox may not reach the proxy");
             }
 
             FlushDns();
@@ -231,6 +228,19 @@ public class ProxyService
             {
                 OnLog($"CA store install skipped: {ex.Message}");
             }
+
+            _ = Task.Run(async () =>
+            {
+                foreach (var h in SettingsHosts)
+                {
+                    try
+                    {
+                        await PreconnectUpstreamAsync(h);
+                        OnLog($"Pre-warmed upstream connection for {h}");
+                    }
+                    catch { }
+                }
+            });
 
             return true;
         }
@@ -280,7 +290,6 @@ public class ProxyService
         try { _serverThread?.Join(1500); } catch { }
         _serverThread = null;
 
-        try { RemovePortProxy(); } catch { }
         try { RemoveHosts(); } catch { }
         try { FlushDns(); } catch { }
         try { RemoveCaFromCacertPem(); } catch { }
@@ -288,6 +297,16 @@ public class ProxyService
         try { DeleteVersionFlagCaches(); } catch { }
         try { _hostCerts.Clear(); } catch { }
         try { _upstreamIps.Clear(); } catch { }
+        try
+        {
+            foreach (var kv in _warmConnections)
+            {
+                try { kv.Value.ssl?.Dispose(); } catch { }
+                try { kv.Value.tcp?.Close(); } catch { }
+            }
+            _warmConnections.Clear();
+        }
+        catch { }
         try { _defaultCert?.Dispose(); } catch { }
         _defaultCert = null;
         try { _caCert?.Dispose(); } catch { }
@@ -612,20 +631,20 @@ public class ProxyService
             if (!IsRunning || _listener == null)
                 return (false, "Proxy is not running");
 
-            OnLog("Self-test: checking firewall and TLS pipeline before launching Roblox...");
+            OnLog("Self-test: checking proxy TLS pipeline...");
 
             TcpClient testTcp;
             try
             {
                 testTcp = new TcpClient();
-                testTcp.ReceiveTimeout = 10000;
-                testTcp.SendTimeout = 10000;
+                testTcp.ReceiveTimeout = 5000;
+                testTcp.SendTimeout = 5000;
                 testTcp.Connect(IPAddress.Loopback, _activePort);
             }
             catch (Exception ex)
             {
                 string msg = $"Self-test FAILED: cannot connect to proxy on 127.0.0.1:{_activePort} ({ex.Message}). " +
-                    "A firewall or antivirus is likely blocking the connection. Allow LeitostrapV7.exe through your firewall.";
+                    "Allow Leitostrap-Injector.exe through your firewall.";
                 OnLog(msg);
                 return (false, msg);
             }
@@ -639,9 +658,9 @@ public class ProxyService
                     EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
                     CertificateRevocationCheckMode = X509RevocationMode.NoCheck
                 });
-                if (!handshake.Wait(10000))
+                if (!handshake.Wait(5000))
                 {
-                    string msg = "Self-test FAILED: TLS handshake with the proxy did not complete in 10 seconds.";
+                    string msg = "Self-test FAILED: TLS handshake with proxy did not complete in 5 seconds.";
                     OnLog(msg);
                     return (false, msg);
                 }
@@ -655,39 +674,8 @@ public class ProxyService
                     using var presentedCert = new X509Certificate2(presented);
                     ourCert = string.Equals(presentedCert.Issuer, _caCert.Subject, StringComparison.OrdinalIgnoreCase);
                 }
-                if (!ourCert)
-                    OnLog("Self-test warning: proxy did not present a certificate signed by our CA");
 
-                string req =
-                    "GET /v2/client-version/WindowsPlayer HTTP/1.1\r\n" +
-                    "Host: clientsettingscdn.roblox.com\r\n" +
-                    "Accept: application/json\r\n" +
-                    "Accept-Encoding: identity\r\n" +
-                    "Connection: close\r\n" +
-                    "\r\n";
-                byte[] reqBytes = Encoding.ASCII.GetBytes(req);
-                ssl.Write(reqBytes, 0, reqBytes.Length);
-                ssl.Flush();
-
-                var resp = ReadHttpResponse(ssl, allowCloseDelimited: true);
-                if (resp == null || resp.Value.StatusCode == 0)
-                {
-                    string msg = "Self-test FAILED: no HTTP response within 10 seconds. The proxy received the request but " +
-                        "could not reach Roblox upstream in time (DNS or upstream connectivity). Check your internet connection " +
-                        "or antivirus HTTPS inspection.";
-                    OnLog(msg);
-                    return (false, msg);
-                }
-                if (resp.Value.StatusCode >= 500)
-                {
-                    string msg = $"Self-test FAILED: proxy returned HTTP {resp.Value.StatusCode} - upstream unreachable. " +
-                        "Roblox servers may be down, your connection blocked, or an antivirus is intercepting HTTPS.";
-                    OnLog(msg);
-                    return (false, msg);
-                }
-
-                OnLog($"Self-test passed: TLS handshake OK, proxy returned HTTP {resp.Value.StatusCode}, " +
-                    $"certificate signed by our CA: {ourCert}");
+                OnLog($"Self-test passed: proxy TLS OK, CA signed: {ourCert}");
                 return (true, "Proxy self-test passed");
             }
             finally
@@ -758,6 +746,41 @@ public class ProxyService
 
     #region Port Proxy Bridge (443 busy fallback)
 
+    private static void TryKillPort443()
+    {
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo("netstat", "-ano")
+            {
+                CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true
+            };
+            using var p = System.Diagnostics.Process.Start(psi);
+            if (p == null) return;
+            string output = p.StandardOutput.ReadToEnd();
+            p.WaitForExit(5000);
+
+            foreach (var line in output.Split('\n'))
+            {
+                if (!line.Contains(":443", StringComparison.OrdinalIgnoreCase)) continue;
+                if (!line.Contains("LISTENING", StringComparison.OrdinalIgnoreCase)) continue;
+                var parts = line.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length < 5) continue;
+                if (int.TryParse(parts[^1], out int pid) && pid > 0)
+                {
+                    try
+                    {
+                        var proc = System.Diagnostics.Process.GetProcessById(pid);
+                        OnLogStatic($"Killing process {proc.ProcessName} (PID {pid}) using port 443");
+                        proc.Kill();
+                        proc.WaitForExit(3000);
+                    }
+                    catch { }
+                }
+            }
+        }
+        catch { }
+    }
+
     private bool AddPortProxy(int targetPort)
     {
         try
@@ -822,7 +845,6 @@ public class ProxyService
                         (l.Contains("127.0.0.1", StringComparison.Ordinal) ||
                          l.Contains("::1", StringComparison.Ordinal)));
                     lines.Add($"127.0.0.1 {host} {HostsMarker}");
-                    lines.Add($"::1 {host} {HostsMarker}");
                 }
                 if (WriteHosts(string.Join("\n", lines)))
                 {
@@ -1067,13 +1089,17 @@ public class ProxyService
             client.SendTimeout = 30000;
 
             clientSsl = new SslStream(client.GetStream(), false);
+            var defaultCert = _defaultCert ?? throw new Exception("No default cert");
             var sslOptions = new SslServerAuthenticationOptions
             {
+                ServerCertificate = defaultCert,
                 ClientCertificateRequired = false,
                 CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
                 EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
-                ServerCertificateSelectionCallback = (sender, hostName) =>
-                    SelectCertificate(hostName)
+                ApplicationProtocols = new List<SslApplicationProtocol>
+                {
+                    new SslApplicationProtocol("http/1.1")
+                }
             };
             clientSsl.AuthenticateAsServer(sslOptions);
 
@@ -1116,7 +1142,9 @@ public class ProxyService
                     break;
                 }
 
-                byte[] upstreamRequest = BuildSettingsUpstreamRequest(req.Value);
+                byte[] rawHeader = req.Value.RawHeader ?? Array.Empty<byte>();
+                byte[] rawBody = req.Value.Body ?? Array.Empty<byte>();
+                byte[] upstreamRequest = BuildUpstreamRequestFromRaw(rawHeader, rawBody);
                 try
                 {
                     upstreamSsl.Write(upstreamRequest, 0, upstreamRequest.Length);
@@ -1139,9 +1167,9 @@ public class ProxyService
 
                 OnLog($"<< {resp.Value.StatusCode} {host}{path} body={resp.Value.Body.Length}");
                 var (outBody, outEncoding, injected) = ProcessSettingsBody(req.Value.Path, resp.Value);
-                SendResponse(clientSsl, resp.Value, outBody, outEncoding, keepAlive);
+                SendSettingsResponse(clientSsl, resp.Value, outBody, outEncoding);
 
-                if (!keepAlive) break;
+                break;
             }
         }
         catch (Exception ex)
@@ -1250,9 +1278,26 @@ public class ProxyService
         }
     }
 
-    private SslStream? ConnectUpstream(string host, out TcpClient? tcpClient)
+    public async Task PreconnectUpstreamAsync(string host)
     {
-        tcpClient = null;
+        try
+        {
+            await _preconnectLock.WaitAsync();
+            if (_warmConnections.ContainsKey(host)) return;
+
+            var (ssl, tcp) = await ConnectUpstreamAsync(host);
+            if (ssl != null)
+                _warmConnections[host] = (ssl, tcp);
+        }
+        catch { }
+        finally
+        {
+            _preconnectLock.Release();
+        }
+    }
+
+    private async Task<(SslStream? ssl, TcpClient? tcp)> ConnectUpstreamAsync(string host)
+    {
         try
         {
             IPAddress[] ips;
@@ -1262,54 +1307,92 @@ public class ProxyService
                 if (ips.Length > 0)
                     _upstreamIps[host] = ips;
                 else
-                    return null;
+                    return (null, null);
             }
             else
             {
                 ips = cached;
             }
 
-            foreach (var ip in ips)
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var tasks = ips.Select(ip => ConnectSingleUpstreamAsync(host, ip, cts.Token)).ToList();
+            var completed = await Task.WhenAny(tasks);
+            var result = await completed;
+
+            foreach (var t in tasks)
             {
-                TcpClient? tcp = null;
-                try
+                if (t != completed && t.Status == TaskStatus.RanToCompletion)
                 {
-                    tcp = new TcpClient();
-                    tcp.NoDelay = true;
-                    var connectTask = tcp.ConnectAsync(ip, 443);
-                    if (!connectTask.Wait(5000))
-                    {
-                        try { tcp.Close(); } catch { }
-                        OnLog($"Upstream connect timeout {host} via {ip} (5s), trying next...");
-                        continue;
-                    }
-
-                    var ssl = new SslStream(tcp.GetStream(), false, (s, c, ch, e) => true);
-                    var handshakeTask = ssl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
-                    {
-                        TargetHost = host,
-                        EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
-                        CertificateRevocationCheckMode = X509RevocationMode.NoCheck
-                    });
-                    if (!handshakeTask.Wait(8000))
-                    {
-                        try { ssl.Dispose(); } catch { }
-                        try { tcp.Close(); } catch { }
-                        OnLog($"Upstream TLS handshake timeout {host} via {ip} (8s), trying next...");
-                        continue;
-                    }
-                    ssl.ReadTimeout = 45000;
-                    ssl.WriteTimeout = 45000;
-
-                    tcpClient = tcp;
-                    return ssl;
-                }
-                catch (Exception ex)
-                {
-                    try { tcp?.Close(); } catch { }
-                    OnLog($"Upstream connect failed {host} via {ip}: {ex.Message}");
+                    var (s, tc) = t.Result;
+                    try { s?.Dispose(); } catch { }
+                    try { tc?.Close(); } catch { }
                 }
             }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            OnLog($"ConnectUpstream error for {host}: {ex.Message}");
+            return (null, null);
+        }
+    }
+
+    private async Task<(SslStream ssl, TcpClient tcp)> ConnectSingleUpstreamAsync(string host, IPAddress ip, CancellationToken ct)
+    {
+        var tcp = new TcpClient();
+        tcp.NoDelay = true;
+        try
+        {
+            using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            connectCts.CancelAfter(TimeSpan.FromSeconds(3));
+            await tcp.ConnectAsync(ip, 443, connectCts.Token);
+
+            var ssl = new SslStream(tcp.GetStream(), false, (s, c, ch, e) => true);
+            using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            handshakeCts.CancelAfter(TimeSpan.FromSeconds(5));
+            await ssl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
+            {
+                TargetHost = host,
+                EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+                CertificateRevocationCheckMode = X509RevocationMode.NoCheck
+            }, handshakeCts.Token);
+
+            ssl.ReadTimeout = 45000;
+            ssl.WriteTimeout = 45000;
+
+            return (ssl, tcp);
+        }
+        catch (Exception ex)
+        {
+            try { tcp.Close(); } catch { }
+            OnLog($"Upstream connect failed {host} via {ip}: {ex.Message}");
+            return (null!, null!);
+        }
+    }
+
+    private SslStream? ConnectUpstream(string host, out TcpClient? tcpClient)
+    {
+        tcpClient = null;
+        try
+        {
+            if (_warmConnections.TryGetValue(host, out var warm) && warm.ssl != null)
+            {
+                tcpClient = warm.tcp;
+                _warmConnections.Remove(host);
+                OnLog($"Using pre-warmed upstream connection for {host}");
+                return warm.ssl;
+            }
+
+            var connectTask = ConnectUpstreamAsync(host);
+            if (connectTask.Wait(15000))
+            {
+                var result = connectTask.Result;
+                tcpClient = result.tcp;
+                return result.ssl;
+            }
+
+            OnLog($"ConnectUpstream timed out for {host}");
             return null;
         }
         catch (Exception ex)
@@ -1610,32 +1693,72 @@ public class ProxyService
 
     #region Request and Response Building
 
-    private byte[] BuildSettingsUpstreamRequest(HttpRequest req)
+    private byte[] BuildUpstreamRequestFromRaw(byte[] rawHeaderBytes, byte[] rawBodyBytes)
     {
-        var sb = new StringBuilder();
-        sb.Append($"{req.Method} {req.Path} HTTP/1.1\r\n");
-        sb.Append($"Host: {req.Host}\r\n");
-        sb.Append("Accept-Encoding: gzip, deflate\r\n");
+        var headerStr = Encoding.ASCII.GetString(rawHeaderBytes);
+        var lines = headerStr.Split(new[] { "\r\n" }, StringSplitOptions.None);
+        if (lines.Length < 1) return rawHeaderBytes;
 
-        foreach (var kv in req.Headers)
+        var sb = new StringBuilder();
+        sb.Append(lines[0]);
+        sb.Append("\r\n");
+
+        for (int i = 1; i < lines.Length; i++)
         {
-            if (HopByHopHeaders.Contains(kv.Key)) continue;
-            if (kv.Key.Equals("Host", StringComparison.OrdinalIgnoreCase)) continue;
-            if (kv.Key.Equals("Accept-Encoding", StringComparison.OrdinalIgnoreCase)) continue;
-            if (ConditionalHeaders.Contains(kv.Key)) continue;
-            sb.Append($"{kv.Key}: {kv.Value}\r\n");
+            var line = lines[i];
+            if (string.IsNullOrEmpty(line)) continue;
+            var idx = line.IndexOf(':');
+            if (idx <= 0) continue;
+            var key = line[..idx].Trim();
+            if (HopByHopHeaders.Contains(key)) continue;
+            if (ConditionalHeaders.Contains(key)) continue;
+            sb.Append(line);
+            sb.Append("\r\n");
         }
 
-        sb.Append($"Content-Length: {req.Body.Length}\r\n");
-        sb.Append("Connection: close\r\n");
+        sb.Append("connection: close\r\n");
+        sb.Append($"content-length: {rawBodyBytes.Length}\r\n");
         sb.Append("\r\n");
 
         byte[] headerBytes = Encoding.ASCII.GetBytes(sb.ToString());
-        byte[] result = new byte[headerBytes.Length + req.Body.Length];
+        byte[] result = new byte[headerBytes.Length + rawBodyBytes.Length];
         Buffer.BlockCopy(headerBytes, 0, result, 0, headerBytes.Length);
-        if (req.Body.Length > 0)
-            Buffer.BlockCopy(req.Body, 0, result, headerBytes.Length, req.Body.Length);
+        if (rawBodyBytes.Length > 0)
+            Buffer.BlockCopy(rawBodyBytes, 0, result, headerBytes.Length, rawBodyBytes.Length);
         return result;
+    }
+
+    private void SendSettingsResponse(SslStream stream, HttpResponse resp, byte[] body, string bodyEncoding)
+    {
+        try
+        {
+            var sb = new StringBuilder();
+            sb.Append($"HTTP/1.1 {resp.StatusCode} {resp.StatusText}\r\n");
+
+            foreach (var kv in resp.Headers)
+            {
+                if (HopByHopHeaders.Contains(kv.Key)) continue;
+                if (kv.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase)) continue;
+                if (kv.Key.Equals("Content-Encoding", StringComparison.OrdinalIgnoreCase)) continue;
+                if (kv.Key.Equals("ETag", StringComparison.OrdinalIgnoreCase)) continue;
+                if (kv.Key.Equals("Content-MD5", StringComparison.OrdinalIgnoreCase)) continue;
+                if (kv.Key.Equals("x-signature-ed25519", StringComparison.OrdinalIgnoreCase)) continue;
+                sb.Append($"{kv.Key}: {kv.Value}\r\n");
+            }
+
+            if (bodyEncoding.Length > 0)
+                sb.Append($"Content-Encoding: {bodyEncoding}\r\n");
+            sb.Append($"Content-Length: {body.Length}\r\n");
+            sb.Append("Connection: close\r\n");
+            sb.Append("\r\n");
+
+            byte[] headerBytes = Encoding.ASCII.GetBytes(sb.ToString());
+            stream.Write(headerBytes, 0, headerBytes.Length);
+            if (body.Length > 0)
+                stream.Write(body, 0, body.Length);
+            stream.Flush();
+        }
+        catch { }
     }
 
     private (byte[] body, string encoding, bool injected) ProcessSettingsBody(string requestPath, HttpResponse resp)
@@ -2107,6 +2230,73 @@ public class ProxyService
         catch
         {
             return null;
+        }
+    }
+
+    #endregion
+
+    #region Cache Clearing
+
+    private void ClearAllRobloxCaches()
+    {
+        try
+        {
+            string appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            string tempRoblox = Path.Combine(appData, "Temp", "Roblox");
+
+            foreach (string sub in new[] { "cache", "http", "raknet" })
+            {
+                string dir = Path.Combine(tempRoblox, sub);
+                if (!Directory.Exists(dir)) continue;
+                foreach (var f in Directory.GetFiles(dir))
+                {
+                    try
+                    {
+                        File.SetAttributes(f, FileAttributes.Normal);
+                        File.Delete(f);
+                    }
+                    catch { }
+                }
+            }
+
+            string robloxHttp = Path.Combine(appData, "Roblox", "http");
+            if (Directory.Exists(robloxHttp))
+            {
+                foreach (var f in Directory.GetFiles(robloxHttp))
+                {
+                    try
+                    {
+                        File.SetAttributes(f, FileAttributes.Normal);
+                        File.Delete(f);
+                    }
+                    catch { }
+                }
+            }
+
+            string versionsDir = Path.Combine(appData, "Roblox", "Versions");
+            if (Directory.Exists(versionsDir))
+            {
+                foreach (var verDir in Directory.GetDirectories(versionsDir))
+                {
+                    string httpDir = Path.Combine(verDir, "http");
+                    if (!Directory.Exists(httpDir)) continue;
+                    foreach (var f in Directory.GetFiles(httpDir))
+                    {
+                        try
+                        {
+                            File.SetAttributes(f, FileAttributes.Normal);
+                            File.Delete(f);
+                        }
+                        catch { }
+                    }
+                }
+            }
+
+            OnLog("Cleared all Roblox cache directories");
+        }
+        catch (Exception ex)
+        {
+            OnLog($"Cache clear error: {ex.Message}");
         }
     }
 

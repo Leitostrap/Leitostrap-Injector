@@ -50,7 +50,7 @@
                                 BorderThickness="1" HorizontalAlignment="Center" Margin="0,0,0,16">
                             <Border CornerRadius="38" ClipToBounds="True" HorizontalAlignment="Center"
                                     VerticalAlignment="Center" Width="76" Height="76">
-                                <Image Source="/LeitostrapV7;component/Leitostrap.png"
+                                <Image Source="/Leitostrap-Injector;component/Leitostrap.png"
                                        Width="76" Height="76" Stretch="UniformToFill"/>
                             </Border>
                         </Border>
@@ -125,6 +125,7 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" Text="Installation Path" FontSize="16" FontWeight="SemiBold"
                                Foreground="{StaticResource White}"/>
@@ -157,7 +158,13 @@
                                       Foreground="{StaticResource White}" Content="Exclude from Windows Defender"/>
                         </StackPanel>
                     </Border>
-                    <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+                    <Border x:Name="OffsetStatusBadge" Grid.Row="4" CornerRadius="6" Padding="12,8" Margin="0,8,0,0" Visibility="Collapsed">
+                        <StackPanel Orientation="Horizontal">
+                            <ui:SymbolIcon x:Name="OffsetStatusIcon" FontSize="12" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="OffsetStatusText" Text="" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Border>
+                    <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
                         <Button Content="Back" Click="BackBtn_Click" Style="{StaticResource ModernBtn}" Margin="0,0,8,0"/>
                         <Button Content="Install" Click="Install_Click" Style="{StaticResource GreenBtn}" Width="100"/>
                     </StackPanel>

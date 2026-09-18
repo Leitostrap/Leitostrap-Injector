@@ -45,6 +45,7 @@ public class OffsetService
     private Dictionary<string, string> _cacheOffsets = new();
     private readonly object _cacheLock = new();
     private string _currentVersion = "";
+    private string _offsetVersion = "";
     private bool _fetched;
     private bool _cacheFetched;
     private int _totalFromLink;
@@ -67,6 +68,7 @@ public class OffsetService
 
 
     public string CurrentVersion => _currentVersion;
+    public string OffsetVersion => _offsetVersion;
     public bool IsFetched => _fetched;
     public int TotalFromLink => _totalFromLink;
 
@@ -196,7 +198,12 @@ public class OffsetService
             "PCStudioBootstrapper", "MacStudioBootstrapper", "PCClientBootstrapper", "MacClientBootstrapper"
         };
         var buckets = new[] { "", "/bucket/zcanary", "/bucket/zintegration" };
-        var baseUrl = "https://clientsettingscdn.roblox.com/v2/settings/application/";
+        var cdnBaseUrl = "https://clientsettingscdn.roblox.com/v2/settings/application/";
+        var apiBaseUrl = "https://clientsettings.roblox.com/v2/settings/application/";
+        var v1BaseUrl = "https://clientsettingscdn.roblox.com/settings/application/";
+        var v1ApiBaseUrl = "https://clientsettings.roblox.com/settings/application/";
+        var compressedBaseUrl = "https://clientsettingscdn.roblox.com/v2/settings-compressed/application/";
+        var compressedApiBaseUrl = "https://clientsettings.roblox.com/v2/settings-compressed/application/";
 
 
         var tasks = new List<Task>();
@@ -204,8 +211,12 @@ public class OffsetService
         {
             foreach (var bucket in buckets)
             {
-                string url = $"{baseUrl}{app}{bucket}";
-                tasks.Add(FetchSingleSettings(url));
+                tasks.Add(FetchSingleSettings($"{cdnBaseUrl}{app}{bucket}"));
+                tasks.Add(FetchSingleSettings($"{apiBaseUrl}{app}{bucket}"));
+                tasks.Add(FetchSingleSettings($"{compressedBaseUrl}{app}{bucket}"));
+                tasks.Add(FetchSingleSettings($"{compressedApiBaseUrl}{app}{bucket}"));
+                tasks.Add(FetchSingleSettings($"{v1BaseUrl}{app}{bucket}"));
+                tasks.Add(FetchSingleSettings($"{v1ApiBaseUrl}{app}{bucket}"));
             }
         }
 
@@ -288,36 +299,109 @@ public class OffsetService
         try
         {
             using var doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("applicationSettings", out JsonElement settings))
-                return 0;
-
 
             lock (_cacheLock)
             {
-                foreach (var prop in settings.EnumerateObject())
+                if (doc.RootElement.TryGetProperty("applicationSettings", out JsonElement settings))
                 {
-                    string name = prop.Name;
-                    string value = prop.Value.ValueKind switch
+                    count += ParseSettingsProperties(settings);
+                }
+
+                foreach (var prop in doc.RootElement.EnumerateObject())
+                {
+                    if (prop.Name == "applicationSettings") continue;
+                    if (prop.Value.ValueKind == JsonValueKind.Object)
                     {
-                        JsonValueKind.True => "True",
-                        JsonValueKind.False => "False",
-                        JsonValueKind.String => prop.Value.GetString() ?? "",
-                        JsonValueKind.Number => prop.Value.ToString(),
-                        _ => ""
-                    };
-
-
-                    if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(value)) continue;
-
-
-                    _cacheOffsets[name] = value;
-                    _allOffsets[name] = new OffsetItem { Name = name, Value = value, Type = "Cache" };
-                    count++;
+                        count += ParseSettingsProperties(prop.Value);
+                    }
                 }
             }
         }
         catch { }
         return count;
+    }
+
+
+    private int ParseSettingsProperties(JsonElement settings)
+    {
+        int count = 0;
+        foreach (var prop in settings.EnumerateObject())
+        {
+            count += ParseSingleSetting(prop.Name, prop.Value);
+        }
+        return count;
+    }
+
+
+    private int ParseSingleSetting(string name, JsonElement value)
+    {
+        int count = 0;
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.True:
+                _cacheOffsets[name] = "True";
+                _allOffsets[name] = new OffsetItem { Name = name, Value = "True", Type = "Cache" };
+                count++;
+                break;
+            case JsonValueKind.False:
+                _cacheOffsets[name] = "False";
+                _allOffsets[name] = new OffsetItem { Name = name, Value = "False", Type = "Cache" };
+                count++;
+                break;
+            case JsonValueKind.String:
+                string strVal = value.GetString() ?? "";
+                if (!string.IsNullOrEmpty(strVal))
+                {
+                    _cacheOffsets[name] = strVal;
+                    _allOffsets[name] = new OffsetItem { Name = name, Value = strVal, Type = "Cache" };
+                    count++;
+                }
+                break;
+            case JsonValueKind.Number:
+                string numVal = value.ToString();
+                _cacheOffsets[name] = numVal;
+                _allOffsets[name] = new OffsetItem { Name = name, Value = numVal, Type = "Cache" };
+                count++;
+                break;
+            case JsonValueKind.Object:
+                string nestedVal = ExtractNestedValue(value);
+                if (!string.IsNullOrEmpty(nestedVal))
+                {
+                    _cacheOffsets[name] = nestedVal;
+                    _allOffsets[name] = new OffsetItem { Name = name, Value = nestedVal, Type = "Cache" };
+                    count++;
+                }
+                count += ParseSettingsProperties(value);
+                break;
+            case JsonValueKind.Array:
+                foreach (var item in value.EnumerateArray())
+                {
+                    if (item.ValueKind == JsonValueKind.Object)
+                        count += ParseSettingsProperties(item);
+                }
+                break;
+        }
+        return count;
+    }
+
+
+    private string ExtractNestedValue(JsonElement elem)
+    {
+        foreach (string key in new[] { "value", "Value", "CurrentValue", "defaultValue", "DefaultValue" })
+        {
+            if (elem.TryGetProperty(key, out JsonElement val))
+            {
+                return val.ValueKind switch
+                {
+                    JsonValueKind.String => val.GetString() ?? "",
+                    JsonValueKind.True => "True",
+                    JsonValueKind.False => "False",
+                    JsonValueKind.Number => val.ToString(),
+                    _ => ""
+                };
+            }
+        }
+        return "";
     }
 
 
@@ -428,6 +512,15 @@ public class OffsetService
                         _allOffsets["ClientVersion"] = new OffsetItem { Name = "ClientVersion", Value = _currentVersion, Type = "Cache" };
                     }
                 }
+
+                var rvMatch = Regex.Match(line, @"Roblox\s+Version\s*:\s*(version-[a-f0-9]+)");
+                if (rvMatch.Success)
+                {
+                    _offsetVersion = rvMatch.Groups[1].Value;
+                    if (string.IsNullOrEmpty(_currentVersion))
+                        _currentVersion = _offsetVersion;
+                }
+
                 continue;
             }
 
@@ -536,6 +629,27 @@ public class OffsetService
     {
         try
         {
+            foreach (var proc in Process.GetProcessesByName("RobloxPlayerBeta"))
+            {
+                try
+                {
+                    string exePath = proc.MainModule?.FileName ?? "";
+                    if (!string.IsNullOrEmpty(exePath) && File.Exists(exePath))
+                    {
+                        string parent = Path.GetFileName(Path.GetDirectoryName(exePath));
+                        var m = Regex.Match(parent, @"version-([a-f0-9]{16})");
+                        if (m.Success)
+                            return m.Groups[0].Value;
+                    }
+                }
+                catch { }
+            }
+        }
+        catch { }
+
+
+        try
+        {
             var psi = new ProcessStartInfo
             {
                 FileName = "wmic",
@@ -582,6 +696,23 @@ public class OffsetService
         catch { }
 
 
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\WOW6432Node\Roblox\RobloxStudio");
+            if (key != null)
+            {
+                object val = key.GetValue("VersionFolder");
+                if (val != null)
+                {
+                    var m = Regex.Match(val.ToString() ?? "", @"version-([a-f0-9]{16})");
+                    if (m.Success)
+                        return m.Groups[0].Value;
+                }
+            }
+        }
+        catch { }
+
+
         string versionsDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "Roblox", "Versions");
@@ -592,6 +723,23 @@ public class OffsetService
                 var m = Regex.Match(Path.GetFileName(entry), @"version-([a-f0-9]{16})");
                 if (m.Success && File.Exists(Path.Combine(entry, "RobloxPlayerBeta.exe")))
                     return m.Groups[0].Value;
+            }
+        }
+
+
+        string programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        foreach (string baseDir in new[] { programFilesX86, programFiles })
+        {
+            string robloxPath = Path.Combine(baseDir, "Roblox", "Versions");
+            if (Directory.Exists(robloxPath))
+            {
+                foreach (string entry in Directory.GetDirectories(robloxPath))
+                {
+                    var m = Regex.Match(Path.GetFileName(entry), @"version-([a-f0-9]{16})");
+                    if (m.Success && File.Exists(Path.Combine(entry, "RobloxPlayerBeta.exe")))
+                        return m.Groups[0].Value;
+                }
             }
         }
 

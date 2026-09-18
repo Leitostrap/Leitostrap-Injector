@@ -62,7 +62,7 @@ public class Combined
                     return await InjectCombined(flatDict, progress);
 
                 case InjectionMethod.CacheMethod:
-                    return await InjectProxy(flatDict);
+                    return await InjectProxy(flatDict, progress);
 
                 case InjectionMethod.MemoryOffsets:
                     return await InjectMemory(flatDict, preferOffsetless: false, progress);
@@ -304,7 +304,7 @@ public class Combined
         return (true, finalMsg);
     }
 
-    private async Task<(bool ok, string msg)> InjectProxy(Dictionary<string, string> flags)
+    private async Task<(bool ok, string msg)> InjectProxy(Dictionary<string, string> flags, Action<int, int>? progress = null)
     {
         ConsoleService.Instance.Log("Proxy: Starting HTTPS proxy...", "Info");
         OnStatusUpdate?.Invoke("Starting proxy...", "injecting");
@@ -326,6 +326,10 @@ public class Combined
 
         ConsoleService.Instance.Log($"Proxy: Proxy started with {proxyFlags.Count:N0} imported flags...", "Info");
 
+        progress?.Invoke(0, proxyFlags.Count);
+        try { CacheMethod.Instance.PrimeCacheOnly(proxyFlags); } catch { }
+        progress?.Invoke(proxyFlags.Count, proxyFlags.Count);
+
         ConsoleService.Instance.Log("Proxy: Running self-test and diagnostics before launching Roblox...", "Info");
         ProxyService.Instance.DetectFirewall();
         ProxyService.Instance.VerifyHostsActive();
@@ -336,6 +340,10 @@ public class Combined
             OnStatusUpdate?.Invoke("Proxy self-test failed", "error");
             ProxyService.Instance.Stop();
             return (false, selfMsg);
+        }
+        if (selfMsg.StartsWith("Self-test WARNING", StringComparison.OrdinalIgnoreCase))
+        {
+            ConsoleService.Instance.Log($"Proxy: {selfMsg}", "Warning");
         }
 
         if (ProcessService.Instance.IsRunning())

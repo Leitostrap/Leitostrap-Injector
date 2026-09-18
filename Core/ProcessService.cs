@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Management;
 using System.Net;
 using System.Net.Http;
 using System.Net.Security;
@@ -53,6 +54,17 @@ public class ProcessService
     public event Action<string, string, string>? OnRobloxDetected;
     public event Action? OnRobloxClosed;
 
+    private static readonly Dictionary<string, (string name, string thumbUrl, DateTime fetched)> _gameInfoCache = new();
+    private static readonly HttpClient _gameInfoHttp = new(new HttpClientHandler
+    {
+        ServerCertificateCustomValidationCallback = (_, _, _, _) => true
+    }) { Timeout = TimeSpan.FromSeconds(8) };
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+    [DllImport("user32.dll")]
+    private static extern int GetWindowTextLength(IntPtr hWnd);
+
 
     private ProcessService() { }
 
@@ -91,6 +103,10 @@ public class ProcessService
 
                     info.PlaceID = GetPlaceIdFromArgs(proc);
                     if (string.IsNullOrEmpty(info.PlaceID))
+                        info.PlaceID = GetPlaceIdFromCmdLine(proc);
+                    if (string.IsNullOrEmpty(info.PlaceID))
+                        info.PlaceID = GetPlaceIdFromAllLogs();
+                    if (string.IsNullOrEmpty(info.PlaceID))
                         info.PlaceID = GetPlaceIdFromLogs();
 
 
@@ -112,7 +128,33 @@ public class ProcessService
                                 : info.Title;
                         }
                         else
-                            info.GameName = "Unknown Game";
+                        {
+                            try
+                            {
+                                var hWnd = proc.MainWindowHandle;
+                                if (hWnd != IntPtr.Zero)
+                                {
+                                    int len = GetWindowTextLength(hWnd);
+                                    if (len > 0)
+                                    {
+                                        var sb = new System.Text.StringBuilder(len + 1);
+                                        GetWindowText(hWnd, sb, sb.Capacity);
+                                        var winTitle = sb.ToString();
+                                        if (!string.IsNullOrWhiteSpace(winTitle) && winTitle.ToLower() != "roblox")
+                                        {
+                                            var titleMatch = Regex.Match(winTitle, @"^(.+?)(?:\s*[-–|]\s*Roblox)?$", RegexOptions.IgnoreCase);
+                                            info.GameName = titleMatch.Success && titleMatch.Groups[1].Value.Length > 1
+                                                ? titleMatch.Groups[1].Value.Trim()
+                                                : winTitle;
+                                        }
+                                    }
+                                }
+                            }
+                            catch { }
+
+                            if (string.IsNullOrEmpty(info.GameName))
+                                info.GameName = "Unknown Game";
+                        }
                     }
 
 
@@ -185,6 +227,35 @@ public class ProcessService
                 {
                     var match = Regex.Match(cmdLine, pattern, RegexOptions.IgnoreCase);
                     if (match.Success) return match.Groups[1].Value;
+                }
+            }
+        }
+        catch { }
+        return "";
+    }
+
+
+    private string GetPlaceIdFromCmdLine(Process proc)
+    {
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                $"SELECT CommandLine FROM Win32_Process WHERE ProcessId = {proc.Id}");
+            foreach (ManagementObject obj in searcher.Get())
+            {
+                var cmdLine = obj["CommandLine"]?.ToString();
+                if (!string.IsNullOrEmpty(cmdLine))
+                {
+                    var patterns = new[] {
+                        @"-placeid=(\d+)", @"-PlaceId=(\d+)",
+                        @"placeid[=\s:]+(\d{5,})", @"placeId[=\s:]+(\d{5,})",
+                        @"PlaceID[=\s:]+(\d{5,})", @"place_id[=\s:]+(\d{5,})"
+                    };
+                    foreach (var pattern in patterns)
+                    {
+                        var match = Regex.Match(cmdLine, pattern, RegexOptions.IgnoreCase);
+                        if (match.Success) return match.Groups[1].Value;
+                    }
                 }
             }
         }
@@ -323,18 +394,61 @@ public class ProcessService
     }
 
 
+    private string GetPlaceIdFromAllLogs()
+    {
+        try
+        {
+            var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var logDir = Path.Combine(localAppData, "Roblox", "logs");
+            if (!Directory.Exists(logDir)) return "";
+
+            var logFiles = new DirectoryInfo(logDir)
+                .GetFiles("*.log")
+                .OrderByDescending(f => f.LastWriteTime)
+                .Take(10);
+
+            foreach (var logFile in logFiles)
+            {
+                try
+                {
+                    var content = File.ReadAllText(logFile.FullName);
+                    var patterns = new[] {
+                        @"placeid[""\s:=]+(\d{5,})", @"placeId[""\s:=]+(\d{5,})",
+                        @"PlaceID[""\s:=]+(\d{5,})", @"place_id[""\s:=]+(\d{5,})"
+                    };
+                    foreach (var pattern in patterns)
+                    {
+                        var match = Regex.Match(content, pattern, RegexOptions.IgnoreCase);
+                        if (match.Success) return match.Groups[1].Value;
+                    }
+                }
+                catch { }
+            }
+        }
+        catch { }
+        return "";
+    }
+
+
     private async Task<(string gameName, string thumbUrl)> GetGameInfoAsync(string placeId)
     {
         try
         {
+            if (_gameInfoCache.TryGetValue(placeId, out var cached) &&
+                (DateTime.Now - cached.fetched).TotalMinutes < 10 &&
+                !string.IsNullOrEmpty(cached.name))
+            {
+                return (cached.name, cached.thumbUrl);
+            }
+
             var universeUrl = $"https://apis.roblox.com/universes/v1/places/{placeId}/universe";
-            var uniJson = JsonDocument.Parse(await _http.GetStringAsync(universeUrl));
+            var uniJson = JsonDocument.Parse(await _gameInfoHttp.GetStringAsync(universeUrl));
             var universeId = uniJson.RootElement.TryGetProperty("universeId", out var uid) ? uid.GetInt64().ToString() : "";
             if (string.IsNullOrEmpty(universeId)) return ("", "");
 
 
             var gameUrl = $"https://games.roblox.com/v1/games?universeIds={universeId}";
-            var gameJson = JsonDocument.Parse(await _http.GetStringAsync(gameUrl));
+            var gameJson = JsonDocument.Parse(await _gameInfoHttp.GetStringAsync(gameUrl));
             var gameName = "";
             if (gameJson.RootElement.TryGetProperty("data", out var gameData) && gameData.GetArrayLength() > 0)
                 gameName = gameData[0].TryGetProperty("name", out var nameProp) ? nameProp.GetString() ?? "" : "";
@@ -342,10 +456,17 @@ public class ProcessService
 
             var thumbUrl = "";
             var thumbUrlReq = $"https://thumbnails.roblox.com/v1/games/icons?universeIds={universeId}&size=150x150&format=Png&isCircular=false";
-            var thumbJson = JsonDocument.Parse(await _http.GetStringAsync(thumbUrlReq));
+            var thumbJson = JsonDocument.Parse(await _gameInfoHttp.GetStringAsync(thumbUrlReq));
             if (thumbJson.RootElement.TryGetProperty("data", out var thumbData) && thumbData.GetArrayLength() > 0)
-                thumbUrl = thumbData[0].TryGetProperty("imageUrl", out var urlProp) ? urlProp.GetString() ?? "" : "";
+            {
+                var entry = thumbData[0];
+                var state = entry.TryGetProperty("state", out var stateProp) ? stateProp.GetString() ?? "" : "";
+                if (state == "Completed")
+                    thumbUrl = entry.TryGetProperty("imageUrl", out var urlProp) ? urlProp.GetString() ?? "" : "";
+            }
 
+            if (!string.IsNullOrEmpty(gameName))
+                _gameInfoCache[placeId] = (gameName, thumbUrl, DateTime.Now);
 
             return (gameName, thumbUrl);
         }
@@ -386,6 +507,27 @@ public class ProcessService
     {
         try
         {
+            foreach (var proc in Process.GetProcessesByName("RobloxPlayerBeta"))
+            {
+                try
+                {
+                    string exePath = proc.MainModule?.FileName ?? "";
+                    if (!string.IsNullOrEmpty(exePath) && File.Exists(exePath))
+                    {
+                        string parent = Path.GetFileName(Path.GetDirectoryName(exePath));
+                        var m = System.Text.RegularExpressions.Regex.Match(parent, @"version-([a-f0-9]{16})");
+                        if (m.Success)
+                            return m.Groups[0].Value;
+                    }
+                }
+                catch { }
+            }
+        }
+        catch { }
+
+
+        try
+        {
             string robloxPath = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "Roblox", "Versions");
@@ -414,6 +556,18 @@ public class ProcessService
             {
                 var exe = Path.Combine(robloxPath, "RobloxPlayerBeta.exe");
                 if (File.Exists(exe)) return exe;
+            }
+
+            string programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+            string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            foreach (string baseDir in new[] { programFilesX86, programFiles })
+            {
+                string altPath = Path.Combine(baseDir, "Roblox", "Versions");
+                if (Directory.Exists(altPath))
+                {
+                    var exe = Path.Combine(altPath, "RobloxPlayerBeta.exe");
+                    if (File.Exists(exe)) return exe;
+                }
             }
         }
         catch { }
@@ -448,6 +602,26 @@ public class ProcessService
                 {
                     string exe = Path.Combine(dir, "RobloxPlayerBeta.exe");
                     if (File.Exists(exe)) return exe;
+                }
+            }
+        }
+        catch { }
+
+
+        try
+        {
+            string programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+            string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            foreach (string baseDir in new[] { programFilesX86, programFiles })
+            {
+                string versionsDir = Path.Combine(baseDir, "Roblox", "Versions");
+                if (Directory.Exists(versionsDir))
+                {
+                    foreach (var dir in Directory.GetDirectories(versionsDir, "version-*").OrderByDescending(d => d))
+                    {
+                        string exe = Path.Combine(dir, "RobloxPlayerBeta.exe");
+                        if (File.Exists(exe)) return exe;
+                    }
                 }
             }
         }
@@ -502,18 +676,36 @@ public class ProcessService
     public List<string> GetInstalledVersions()
     {
         var versions = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            string versionsDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Roblox", "Versions");
+            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            string versionsDir = Path.Combine(localAppData, "Roblox", "Versions");
             if (Directory.Exists(versionsDir))
             {
                 foreach (var dir in Directory.GetDirectories(versionsDir, "version-*").OrderByDescending(d => d))
                 {
                     string exe = Path.Combine(dir, "RobloxPlayerBeta.exe");
-                    if (File.Exists(exe))
-                        versions.Add(Path.GetFileName(dir));
+                    string name = Path.GetFileName(dir);
+                    if (File.Exists(exe) && seen.Add(name))
+                        versions.Add(name);
+                }
+            }
+
+            string programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+            string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            foreach (string baseDir in new[] { programFilesX86, programFiles })
+            {
+                string altDir = Path.Combine(baseDir, "Roblox", "Versions");
+                if (Directory.Exists(altDir))
+                {
+                    foreach (var dir in Directory.GetDirectories(altDir, "version-*").OrderByDescending(d => d))
+                    {
+                        string exe = Path.Combine(dir, "RobloxPlayerBeta.exe");
+                        string name = Path.GetFileName(dir);
+                        if (File.Exists(exe) && seen.Add(name))
+                            versions.Add(name);
+                    }
                 }
             }
         }

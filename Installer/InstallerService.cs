@@ -47,12 +47,12 @@ public static class InstallerService
         string currentExe = Process.GetCurrentProcess().MainModule?.FileName ?? "";
         if (!string.IsNullOrEmpty(currentExe) && File.Exists(currentExe))
         {
-            string destExe = Path.Combine(installPath, "LeitostrapV7.exe");
+            string destExe = Path.Combine(installPath, "Leitostrap-Injector.exe");
             File.Copy(currentExe, destExe, true);
         }
         else
         {
-            foreach (var file in Directory.GetFiles(AppContext.BaseDirectory, "LeitostrapV7.exe"))
+            foreach (var file in Directory.GetFiles(AppContext.BaseDirectory, "Leitostrap-Injector.exe"))
                 File.Copy(file, Path.Combine(installPath, Path.GetFileName(file)), true);
         }
 
@@ -60,7 +60,7 @@ public static class InstallerService
         foreach (var file in Directory.GetFiles(AppContext.BaseDirectory))
         {
             string name = Path.GetFileName(file);
-            if (name.StartsWith("LeitostrapV7.", StringComparison.OrdinalIgnoreCase) && name != "LeitostrapV7.exe")
+            if (name.StartsWith("Leitostrap-Injector.", StringComparison.OrdinalIgnoreCase))
                 File.Copy(file, Path.Combine(installPath, name), true);
         }
 
@@ -75,7 +75,7 @@ public static class InstallerService
 
 
         if (runAsAdmin)
-            SetRunAsAdmin(Path.Combine(installPath, "LeitostrapV7.exe"));
+            SetRunAsAdmin(Path.Combine(installPath, "Leitostrap-Injector.exe"));
 
 
         if (excludeAntivirus)
@@ -101,7 +101,7 @@ public static class InstallerService
         try
         {
             string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-            string shortcutPath = Path.Combine(desktopPath, "Leitostrap Injector.lnk");
+            string shortcutPath = Path.Combine(desktopPath, "Leitostrap-Injector.lnk");
             if (File.Exists(shortcutPath)) File.Delete(shortcutPath);
 
 
@@ -149,8 +149,8 @@ public static class InstallerService
         try
         {
             string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-            string shortcutPath = Path.Combine(desktopPath, "Leitostrap Injector.lnk");
-            string exePath = Path.Combine(installPath, "LeitostrapV7.exe");
+            string shortcutPath = Path.Combine(desktopPath, "Leitostrap-Injector.lnk");
+            string exePath = Path.Combine(installPath, "Leitostrap-Injector.exe");
 
 
             Type? shellType = Type.GetTypeFromProgID("WScript.Shell");
@@ -160,7 +160,7 @@ public static class InstallerService
             shortcut.TargetPath = exePath;
             shortcut.WorkingDirectory = installPath;
             shortcut.Description = "Leitostrap Injector - Roblox FFlag Injector";
-            string iconPath = Path.Combine(installPath, "LeitostrapV7.exe");
+            string iconPath = Path.Combine(installPath, "Leitostrap-Injector.exe");
             shortcut.IconLocation = iconPath + ",0";
             shortcut.Save();
             Marshal.ReleaseComObject(shell);
@@ -198,7 +198,6 @@ public static class InstallerService
             {
                 FileName = "powershell.exe",
                 Arguments = $"-NoProfile -Command \"Add-MpPreference -ExclusionPath '{path}'\"",
-                Verb = "runas",
                 UseShellExecute = true,
                 CreateNoWindow = true,
                 WindowStyle = ProcessWindowStyle.Hidden
@@ -231,18 +230,18 @@ public static class InstallerService
     {
         try
         {
-            string regKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\LeitostrapV7";
+            string regKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Leitostrap";
             using var key = Microsoft.Win32.Registry.LocalMachine.CreateSubKey(regKey);
             if (key != null)
             {
-                key.SetValue("DisplayName", "Leitostrap Injector V7.0.0");
+                key.SetValue("DisplayName", "Leitostrap Injector V7.0.1");
                 key.SetValue("DisplayVersion", version);
                 key.SetValue("Publisher", "Leitostrap");
                 key.SetValue("InstallLocation", installPath);
-                string exeFullPath = Path.Combine(installPath, "LeitostrapV7.exe");
+                string exeFullPath = Path.Combine(installPath, "Leitostrap-Injector.exe");
                 key.SetValue("UninstallString", $"\"{exeFullPath}\" --uninstall");
                 key.SetValue("QuietUninstallString", $"\"{exeFullPath}\" --uninstall --quiet");
-                key.SetValue("DisplayIcon", Path.Combine(installPath, "LeitostrapV7.exe"));
+                key.SetValue("DisplayIcon", Path.Combine(installPath, "Leitostrap-Injector.exe"));
                 key.SetValue("EstimatedSize", 50000);
                 key.SetValue("NoModify", 1);
                 key.SetValue("NoRepair", 1);
@@ -257,7 +256,7 @@ public static class InstallerService
     {
         try
         {
-            Microsoft.Win32.Registry.LocalMachine.DeleteSubKeyTree(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\LeitostrapV7", false);
+            Microsoft.Win32.Registry.LocalMachine.DeleteSubKeyTree(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Leitostrap", false);
         }
         catch { }
     }

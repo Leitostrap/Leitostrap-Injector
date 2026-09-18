@@ -8,6 +8,9 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using LeitostrapV7.Core;
+using MessageBox = System.Windows.MessageBox;
+using MessageBoxButton = System.Windows.MessageBoxButton;
+using Wpf.Ui.Controls;
 
 
 namespace LeitostrapV7.Installer;
@@ -62,7 +65,11 @@ public partial class InstallerWindow : Window
         InitializeComponent();
         _pages = new UIElement[] { PageWelcome, PageLanguage, PagePath, PageInstalling, PageDone };
         LanguageList.ItemsSource = _languages;
-        Loaded += (_, _) => Core.LanguageService.Instance.Apply(this);
+        Loaded += (_, _) =>
+        {
+            Core.LanguageService.Instance.Apply(this);
+            UpdateOffsetStatus();
+        };
     }
 
 
@@ -156,7 +163,7 @@ public partial class InstallerWindow : Window
             });
 
 
-            InstallerService.Install(_installPath, shortcuts, admin, antivirus, "7.0.0");
+            InstallerService.Install(_installPath, shortcuts, admin, antivirus, "7.0.1");
 
 
             SettingsService.Instance.Set("Installed", true);
@@ -196,6 +203,38 @@ public partial class InstallerWindow : Window
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
         };
         target.BeginAnimation(WidthProperty, anim);
+    }
+
+
+    private void UpdateOffsetStatus()
+    {
+        string runningVer = OffsetService.Instance.CurrentVersion;
+        string offsetVer = OffsetService.Instance.OffsetVersion;
+
+        if (!string.IsNullOrEmpty(runningVer) && !string.IsNullOrEmpty(offsetVer))
+        {
+            OffsetStatusBadge.Visibility = Visibility.Visible;
+            if (runningVer == offsetVer)
+            {
+                OffsetStatusText.Text = "Supported - Offsets match current Roblox version";
+                OffsetStatusText.Foreground = new SolidColorBrush(Color.FromRgb(0x10, 0xB9, 0x81));
+                OffsetStatusIcon.Symbol = SymbolRegular.CheckmarkCircle20;
+                OffsetStatusIcon.Foreground = new SolidColorBrush(Color.FromRgb(0x10, 0xB9, 0x81));
+                OffsetStatusBadge.Background = new SolidColorBrush(Color.FromArgb(30, 0x10, 0xB9, 0x81));
+                OffsetStatusBadge.BorderBrush = new SolidColorBrush(Color.FromArgb(50, 0x10, 0xB9, 0x81));
+                OffsetStatusBadge.BorderThickness = new Thickness(1);
+            }
+            else
+            {
+                OffsetStatusText.Text = "Unsupported - Offsets don't match current Roblox version";
+                OffsetStatusText.Foreground = new SolidColorBrush(Color.FromRgb(0xEF, 0x44, 0x44));
+                OffsetStatusIcon.Symbol = SymbolRegular.DismissCircle20;
+                OffsetStatusIcon.Foreground = new SolidColorBrush(Color.FromRgb(0xEF, 0x44, 0x44));
+                OffsetStatusBadge.Background = new SolidColorBrush(Color.FromArgb(30, 0xEF, 0x44, 0x44));
+                OffsetStatusBadge.BorderBrush = new SolidColorBrush(Color.FromArgb(50, 0xEF, 0x44, 0x44));
+                OffsetStatusBadge.BorderThickness = new Thickness(1);
+            }
+        }
     }
 
 

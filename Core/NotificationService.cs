@@ -32,7 +32,7 @@ public class NotificationService
     public void SetAccent(string hex) => _currentAccent = hex;
 
 
-    public void Show(string message, NotificationType type = NotificationType.Info, int durationMs = 3000)
+    public void Show(string message, NotificationType type = NotificationType.Info, int durationMs = 4000)
     {
         if (_toastHost == null) return;
         Application.Current.Dispatcher.Invoke(() => ShowToast(message, type, durationMs));
@@ -100,7 +100,7 @@ public class NotificationService
             FontSize = 11,
             Foreground = new SolidColorBrush(Colors.White),
             TextWrapping = TextWrapping.Wrap,
-            MaxWidth = 260,
+            MaxWidth = 350,
             VerticalAlignment = VerticalAlignment.Center
         };
 

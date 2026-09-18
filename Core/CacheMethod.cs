@@ -169,6 +169,12 @@ public class CacheMethod
         return true;
     }
 
+    public int PrimeCacheOnly(Dictionary<string, string> flags)
+    {
+        bool primed = PrimeCache(flags, makeReadonly: false);
+        return primed ? _totalCacheFlags : 0;
+    }
+
 
     public void Stop()
     {

@@ -12,7 +12,7 @@ public class FFlagEntry
 {
     public string Name { get; set; } = "";
     public string Value { get; set; } = "";
-    public string Type { get; set; } = "FFlag";
+    public string Type { get; set; } = "String";
     public bool IsSelected { get; set; }
 }
 
@@ -20,7 +20,7 @@ public class FFlagEntry
 public static class FFlagTypeSource
 {
     public static System.Collections.ObjectModel.ObservableCollection<string> Types { get; } =
-        new(new[] { "FFlag", "DFFlag", "FInt", "DFInt", "FBool", "DFBool", "FFlagString", "Flag", "String", "Int", "Bool" });
+        new(new[] { "String", "Int", "Bool" });
 }
 
 
@@ -40,7 +40,7 @@ public class FFlagService
     }
 
 
-    public void AddFlag(string name, string value, string type = "FFlag")
+    public void AddFlag(string name, string value, string type = "String")
     {
         CurrentFlags.Add(new FFlagEntry
         {
@@ -106,7 +106,7 @@ public class FFlagService
                         ? prop.Value.GetString() ?? ""
                         : prop.Value.ToString();
                     if (!string.IsNullOrEmpty(name))
-                        CurrentFlags.Add(new FFlagEntry { Name = name, Value = value, Type = "FFlag" });
+                        CurrentFlags.Add(new FFlagEntry { Name = name, Value = value, Type = "String" });
                 }
             }
         }
@@ -153,6 +153,19 @@ public class FFlagService
     }
 
 
+    public string GetUniqueTabName(string baseName)
+    {
+        string name = baseName;
+        int suffix = 1;
+        while (Tabs.ContainsKey(name))
+        {
+            suffix++;
+            name = $"{baseName} {suffix}";
+        }
+        return name;
+    }
+
+
     public void RemoveTab(string name)
     {
         if (name != "Default")
@@ -170,6 +183,10 @@ public class FFlagService
     public static string TabsFilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "Leitostrap Injector", "tabs.json");
+
+    public static string CurrentFlagsFilePath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "Leitostrap Injector", "FFlags", "current_fflags.json");
 
 
     public void SaveTabs(IReadOnlyList<string> tabOrder)
@@ -218,8 +235,8 @@ public class FFlagService
                             : f.TryGetProperty("name", out pn) ? (pn.GetString() ?? "") : "";
                         string fval = f.TryGetProperty("Value", out var pv) ? (pv.GetString() ?? "")
                             : f.TryGetProperty("value", out pv) ? (pv.GetString() ?? "") : "";
-                        string ftype = f.TryGetProperty("Type", out var pt) ? (pt.GetString() ?? "FFlag")
-                            : f.TryGetProperty("type", out pt) ? (pt.GetString() ?? "FFlag") : "FFlag";
+                        string ftype = f.TryGetProperty("Type", out var pt) ? (pt.GetString() ?? "String")
+                            : f.TryGetProperty("type", out pt) ? (pt.GetString() ?? "String") : "String";
                         if (!string.IsNullOrEmpty(fname))
                             flags.Add(new FFlagEntry { Name = fname, Value = fval, Type = ftype });
                     }
@@ -230,6 +247,63 @@ public class FFlagService
         }
         catch { }
         return restoredOrder;
+    }
+
+
+    public void SaveCurrentFlags()
+    {
+        try
+        {
+            string dir = Path.GetDirectoryName(CurrentFlagsFilePath) ?? "";
+            Directory.CreateDirectory(dir);
+            var options = new JsonSerializerOptions { WriteIndented = true };
+            string json = JsonSerializer.Serialize(new List<FFlagEntry>(CurrentFlags), options);
+            File.WriteAllText(CurrentFlagsFilePath, json);
+        }
+        catch { }
+    }
+
+
+    public void LoadCurrentFlags()
+    {
+        try
+        {
+            if (!File.Exists(CurrentFlagsFilePath)) return;
+            string json = File.ReadAllText(CurrentFlagsFilePath).Trim();
+            if (string.IsNullOrEmpty(json) || json == "[]") return;
+
+            using var doc = JsonDocument.Parse(json);
+            CurrentFlags.Clear();
+
+            if (doc.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var f in doc.RootElement.EnumerateArray())
+                {
+                    if (f.ValueKind != JsonValueKind.Object) continue;
+                    string fname = f.TryGetProperty("Name", out var pn) ? (pn.GetString() ?? "")
+                        : f.TryGetProperty("name", out pn) ? (pn.GetString() ?? "") : "";
+                    string fval = f.TryGetProperty("Value", out var pv) ? (pv.GetString() ?? "")
+                        : f.TryGetProperty("value", out pv) ? (pv.GetString() ?? "") : "";
+                    string ftype = f.TryGetProperty("Type", out var pt) ? (pt.GetString() ?? "FFlag")
+                        : f.TryGetProperty("type", out pt) ? (pt.GetString() ?? "FFlag") : "FFlag";
+                    if (!string.IsNullOrEmpty(fname))
+                        CurrentFlags.Add(new FFlagEntry { Name = fname, Value = fval, Type = ftype });
+                }
+            }
+            else if (doc.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var prop in doc.RootElement.EnumerateObject())
+                {
+                    string name = prop.Name;
+                    string value = prop.Value.ValueKind == JsonValueKind.String
+                        ? prop.Value.GetString() ?? ""
+                        : prop.Value.ToString();
+                    if (!string.IsNullOrEmpty(name))
+                        CurrentFlags.Add(new FFlagEntry { Name = name, Value = value, Type = "String" });
+                }
+            }
+        }
+        catch { }
     }
 
 
