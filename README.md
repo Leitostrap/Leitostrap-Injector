@@ -95,6 +95,7 @@ Leitostrap uses Windows Native API (`ntdll.dll`) to read and write process memor
 
 | Role | Name |
 |------|------|
+| **Owner** | Leito |
 | **Developer** | Lean |
 | **Developer** | Winnie |
 | **Developer** | Prezone |
